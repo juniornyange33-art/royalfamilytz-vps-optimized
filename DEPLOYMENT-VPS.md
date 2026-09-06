@@ -269,16 +269,7 @@ docker compose logs -f --tail=100 app
 
 Do not run `docker compose down -v` during a normal update. The `-v` option deletes named database and upload volumes and can destroy production data.
 
-## 12. SEO and Performance Verification
-
-The application is pre-optimized for speed and search engines:
-- **SEO**: Meta tags, Open Graph, and Twitter cards are automatically generated.
-- **Sitemap**: Available at `https://your-domain.com/sitemap.xml`. Submit this to Google Search Console.
-- **Robots**: Available at `https://your-domain.com/robots.txt`.
-- **Speed**: Caddy uses Zstd/Gzip compression and caches static assets. PHP uses OPcache for faster execution.
-- **Database**: Indexes are added to key columns for faster queries.
-
-## 13. Final production checklist
+## 12. Final production checklist
 
 | Check | Expected result |
 |---|---|
@@ -289,8 +280,7 @@ The application is pre-optimized for speed and search engines:
 | Google | Login returns to the live domain and opens Dashboard |
 | ClickPesa | Application webhook receives signed `PAYMENT RECEIVED` and `PAYMENT FAILED` events |
 | SMTP | Verification and admin emails arrive with subject and body |
-| SEO | `/sitemap.xml` and `/robots.txt` are accessible |
-| Speed | Page loads quickly with compression enabled |
+| Uploads | Profile and trip images persist after `docker compose up -d --build` |
 | Security | `.env` is mode 600, ports 80/443/SSH only, and no secrets are in Git |
 | Recovery | A fresh database and uploads restore has been tested |
 
