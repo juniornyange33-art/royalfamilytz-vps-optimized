@@ -1,0 +1,78 @@
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-royalfamilytz}
+      MYSQL_USER: ${MYSQL_USER:-royalfamily}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./database.sql:/docker-entrypoint-initdb.d/001-database.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DB_DRIVER: mysql
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${MYSQL_DATABASE:-royalfamilytz}
+      DB_USER: ${MYSQL_USER:-royalfamily}
+      DB_PASS: ${MYSQL_PASSWORD}
+      APP_URL: https://${DOMAIN:?Set DOMAIN in .env}
+      CLICKPESA_CLIENT_ID: ${CLICKPESA_CLIENT_ID}
+      CLICKPESA_API_KEY: ${CLICKPESA_API_KEY}
+      CLICKPESA_BASE_URL: ${CLICKPESA_BASE_URL:-https://api.clickpesa.com/third-parties}
+      CLICKPESA_CHECKSUM_KEY: ${CLICKPESA_CHECKSUM_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      MAIL_FROM: ${MAIL_FROM:-hello@royalfamilytz.org}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-Royal Family Foundation}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURITY: ${SMTP_SECURITY:-tls}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - uploads_data:/var/www/html/uploads
+      - storage_data:/var/www/html/storage
+
+  web:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  db_data:
+    name: royal_family_tz_db_data
+  uploads_data:
+    name: royal_family_tz_uploads_data
+  storage_data:
+    name: royal_family_tz_storage_data
+  caddy_data:
+    name: royal_family_tz_caddy_data
+  caddy_config:
+    name: royal_family_tz_caddy_config

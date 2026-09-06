@@ -1,0 +1,25 @@
+<?php
+// Copy this file to local-config.php and enter your own ClickPesa credentials.
+return [
+    'DB_HOST' => '127.0.0.1',
+    'DB_PORT' => '3306',
+    'DB_NAME' => 'royalfamilytz',
+    'DB_USER' => 'root',
+    'DB_PASS' => '',
+    'CLICKPESA_CLIENT_ID' => 'PASTE_YOUR_CLICKPESA_CLIENT_ID_HERE',
+    'CLICKPESA_API_KEY' => 'PASTE_YOUR_CLICKPESA_API_KEY_HERE',
+    'CLICKPESA_BASE_URL' => 'https://api.clickpesa.com/third-parties',
+    'CLICKPESA_CHECKSUM_KEY' => '',
+    // Use the public HTTPS URL opened by phone users, including /royalfamilytz if applicable.
+    'APP_URL' => 'https://your-public-domain.example/royalfamilytz',
+    'GOOGLE_CLIENT_ID' => '',
+    'GOOGLE_CLIENT_SECRET' => '',
+    'MAIL_FROM' => 'hello@royalfamilytz.org',
+    'MAIL_FROM_NAME' => 'Royal Family TZ',
+    'SMTP_HOST' => 'smtp.gmail.com',
+    'SMTP_PORT' => '587',
+    'SMTP_SECURITY' => 'tls',
+    'SMTP_USER' => 'your-email@gmail.com',
+    'SMTP_PASSWORD' => 'your-16-character-gmail-app-password',
+];
+?>

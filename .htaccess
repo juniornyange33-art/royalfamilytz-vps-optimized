@@ -1,0 +1,9 @@
+RewriteEngine On
+
+# Never route real files or directories through index.php.
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Route application paths to the native PHP front controller.
+RewriteRule ^ index.php [QSA,L]

@@ -1,0 +1,14 @@
+.git
+.gitignore
+local-config.php
+.env
+.env.*
+backups
+node_modules
+frontend
+backend
+firestore.rules
+README.md
+DEPLOYMENT-VPS.md
+storage/*
+uploads/*
