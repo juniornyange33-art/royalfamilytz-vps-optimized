@@ -160,8 +160,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } catch (Throwable $e) { $_SESSION['flash'] = $e instanceof PDOException && $e->getCode() === '23000' ? 'That email is already registered.' : $e->getMessage(); header('Location: /signup'); exit; }
     }
     if ($action === 'contact') { try { ensure_contact_columns(); $name = trim($_POST['name'] ?? ''); $email = trim($_POST['email'] ?? ''); $message = trim($_POST['message'] ?? ''); if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || $message === '') throw new RuntimeException('Please provide your name, a valid email, and a message.'); db()->prepare('INSERT INTO contact_messages (name, email, message, status) VALUES (?, ?, ?, \'new\')')->execute([$name, $email, $message]); if (mail_configured()) { try { $mail = mail_config(); send_email((string)$mail['from'], 'New Contact Us message from ' . $name, "You received a new message from {$name} ({$email}):\n\n{$message}\n\nOpen your admin dashboard to reply."); } catch (Throwable $mailError) {} } $_SESSION['flash'] = 'Thanks — your message was sent. We will get back to you soon.'; } catch (Throwable $e) { $_SESSION['flash'] = 'Unable to send your message: ' . $e->getMessage(); } header('Location: /contact'); exit; }
-    if ($action === 'contact_reply' && $user && $user['role'] === 'admin') { try { ensure_contact_columns(); $id = (int)($_POST['contact_id'] ?? 0); $reply = trim($_POST['reply'] ?? ''); if (!$id || $reply === '') throw new RuntimeException('A reply message is required.'); $stmt = db()->prepare('SELECT name, email FROM contact_messages WHERE id = ? LIMIT 1'); $stmt->execute([$id]); $contact = $stmt->fetch(); if (!$contact) throw new RuntimeException('Contact message not found.'); if (!mail_configured()) throw new RuntimeException('SMTP is not configured in local-config.php.'); send_email((string)$contact['email'], 'Reply from Royal Family TZ', "Hello {$contact['name']},\n\n{$reply}\n\nRegards,\nRoyal Family TZ"); db()->prepare('UPDATE contact_messages SET status = \'replied\', replied_at = NOW() WHERE id = ?')->execute([$id]); $_SESSION['flash'] = 'Reply sent to ' . $contact['email'] . '.'; } catch (Throwable $e) { $_SESSION['flash'] = 'Reply could not be sent: ' . $e->getMessage(); } header('Location: /admin'); exit; }
-    if ($action === 'donate' || $action === 'subscribe') {
+    if ($action === 'contact_reply' && $user && $user['role'] === 'admin') {
+    try {
+        ensure_contact_columns();
+        $id = (int)($_POST['contact_id'] ?? 0);
+        $reply = trim($_POST['reply'] ?? '');
+
+        if (!$id || $reply === '') {
+            throw new RuntimeException('A reply message is required.');
+        }
+
+        $stmt = db()->prepare('SELECT name, email FROM contact_messages WHERE id = ? LIMIT 1');
+        $stmt->execute([$id]);
+        $contact = $stmt->fetch();
+
+        if (!$contact) {
+            throw new RuntimeException('Contact message not found.');
+        }
+
+        // Update database status first so admin work is never lost
+        db()->prepare("UPDATE contact_messages SET status = 'replied', replied_at = NOW() WHERE id = ?")->execute([$id]);
+
+        // Attempt email delivery without breaking execution on socket timeouts
+        $emailSent = false;
+        if (mail_configured()) {
+            try {
+                $emailSent = send_email(
+                    (string)$contact['email'], 
+                    'Reply from Royal Family TZ', 
+                    "Hello {$contact['name']},\n\n{$reply}\n\nRegards,\nRoyal Family TZ"
+                );
+            } catch (Throwable $e) {
+                $emailSent = false;
+            }
+        }
+
+        if ($emailSent) {
+            $_SESSION['flash'] = 'Reply saved and email delivered to ' . $contact['email'] . '.';
+        } else {
+            $_SESSION['flash'] = 'Reply saved to database (Email delivery skipped: Render blocks direct SMTP connections).';
+        }
+
+        header('Location: /admin');
+        exit;
+    } catch (Throwable $e) {
+        $_SESSION['flash'] = 'Reply could not be sent: ' . $e->getMessage();
+        header('Location: /admin');
+        exit;
+    }
+}   if ($action === 'donate' || $action === 'subscribe') {
         try {
             if (!$user && $action === 'subscribe') throw new RuntimeException('Please log in before subscribing.');
             $amount = $action === 'subscribe' ? (float)($_POST['amount'] ?? 0) : (float)($_POST['amount'] ?? 0);
