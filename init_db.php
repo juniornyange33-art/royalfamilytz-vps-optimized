@@ -6,11 +6,17 @@ require_once __DIR__ . '/db.php';
 try {
     $pdo = db();
 
-    // Disable foreign key checks during schema creation
+    // Disable foreign key checks to allow dropping and recreating cleanly
     $pdo->exec("SET FOREIGN_KEY_CHECKS = 0;");
 
+    // Drop old tables to eliminate type mismatches
+    $pdo->exec("DROP TABLE IF EXISTS transactions;");
+    $pdo->exec("DROP TABLE IF EXISTS contact_messages;");
+    $pdo->exec("DROP TABLE IF EXISTS blog_posts;");
+    $pdo->exec("DROP TABLE IF EXISTS users;");
+
     // 1. Users Table
-    $pdo->exec("CREATE TABLE IF NOT EXISTS users (
+    $pdo->exec("CREATE TABLE users (
       id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(120) NOT NULL,
       email VARCHAR(190) NOT NULL UNIQUE,
@@ -29,7 +35,7 @@ try {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
 
     // 2. Contact Messages Table
-    $pdo->exec("CREATE TABLE IF NOT EXISTS contact_messages (
+    $pdo->exec("CREATE TABLE contact_messages (
       id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(120) NOT NULL,
       email VARCHAR(190) NOT NULL,
@@ -38,7 +44,7 @@ try {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
 
     // 3. Transactions Table
-    $pdo->exec("CREATE TABLE IF NOT EXISTS transactions (
+    $pdo->exec("CREATE TABLE transactions (
       id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
       user_id INT UNSIGNED NULL,
       type ENUM('donation','subscription') NOT NULL,
@@ -56,7 +62,7 @@ try {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;");
 
     // 4. Blog Posts Table
-    $pdo->exec("CREATE TABLE IF NOT EXISTS blog_posts (
+    $pdo->exec("CREATE TABLE blog_posts (
       id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
       title VARCHAR(180) NOT NULL,
       excerpt TEXT NOT NULL,
@@ -68,21 +74,17 @@ try {
     // Re-enable foreign key checks
     $pdo->exec("SET FOREIGN_KEY_CHECKS = 1;");
 
-    // 5. Seed Admin User
-    $stmt = $pdo->prepare("SELECT id FROM users WHERE email = ?");
-    $stmt->execute(['admin@royalfamilytz.org']);
-    if (!$stmt->fetch()) {
-        $insertStmt = $pdo->prepare("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)");
-        $insertStmt->execute([
-            'Administrator',
-            'admin@royalfamilytz.org',
-            '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC8J4cXxC5B9p9C7N9eK',
-            'admin'
-        ]);
-    }
+    // 5. Seed Default Admin User
+    $insertStmt = $pdo->prepare("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)");
+    $insertStmt->execute([
+        'Administrator',
+        'admin@royalfamilytz.org',
+        '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC8J4cXxC5B9p9C7N9eK',
+        'admin'
+    ]);
 
-    echo "<h1 style='color:green; text-align:center;'>ORIGINAL SCHEMA INITIALIZED SUCCESSFULLY!</h1>";
-    echo "<p style='text-align:center;'>Tables synchronized: <strong>users, contact_messages, transactions, blog_posts</strong></p>";
+    echo "<h1 style='color:green; text-align:center;'>DATABASE REBUILT SUCCESSFULLY!</h1>";
+    echo "<p style='text-align:center;'>All tables matching local schema created and seeded.</p>";
 
 } catch (Throwable $e) {
     echo "<h1 style='color:red; text-align:center;'>INITIALIZATION ERROR</h1>";
