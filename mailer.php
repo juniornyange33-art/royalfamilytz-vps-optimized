@@ -5,15 +5,26 @@ function mail_config(): array
 {
     static $config = null;
     if ($config !== null) return $config;
+    
     $app = require __DIR__ . '/config.php';
-    $config = $app['mail'] ?? [];
-    return $config;
+    $mail = $app['mail'] ?? [];
+
+    // Fallback to environment variables if config is empty
+    return [
+        'smtp_host'     => $mail['smtp_host']     ?? $mail['SMTP_HOST']     ?? getenv('SMTP_HOST')     ?: 'smtp.gmail.com',
+        'smtp_port'     => $mail['smtp_port']     ?? $mail['SMTP_PORT']     ?? getenv('SMTP_PORT')     ?: 587,
+        'smtp_security' => $mail['smtp_security'] ?? $mail['SMTP_SECURITY'] ?? getenv('SMTP_SECURITY') ?: 'tls',
+        'smtp_user'     => $mail['smtp_user']     ?? $mail['SMTP_USER']     ?? getenv('SMTP_USER')     ?: 'royalfamilytz.org@gmail.com',
+        'smtp_password' => $mail['smtp_password'] ?? $mail['SMTP_PASS']     ?? $mail['SMTP_PASSWORD'] ?? getenv('SMTP_PASSWORD') ?: getenv('SMTP_PASS') ?: '',
+        'from'          => $mail['from']          ?? $mail['MAIL_FROM']     ?? getenv('MAIL_FROM')     ?: 'royalfamilytz.org@gmail.com',
+        'from_name'     => $mail['from_name']     ?? $mail['MAIL_FROM_NAME']?? getenv('MAIL_FROM_NAME')?: 'Royal Family TZ',
+    ];
 }
 
 function mail_configured(): bool
 {
     $c = mail_config();
-    return !empty($c['smtp_host']) && !empty($c['smtp_user']) && !empty($c['smtp_password']) && !empty($c['from']);
+    return !empty($c['smtp_host']) && !empty($c['smtp_user']) && !empty($c['smtp_password']);
 }
 
 function smtp_read($socket): string
