@@ -12,10 +12,10 @@ try {
 
     echo "<h3>Connected to Database: $dbname on $host</h3>";
 
-    if (file_exists('database.sql')) {
-        $sql = file_get_contents('database.sql');
-        
-        // Remove comments and split by semicolon
+    $sqlFile = file_exists('database.sql') ? 'database.sql' : (file_exists('schema.sql') ? 'schema.sql' : null);
+
+    if ($sqlFile) {
+        $sql = file_get_contents($sqlFile);
         $statements = array_filter(array_map('trim', explode(';', $sql)));
 
         foreach ($statements as $stmt) {
@@ -27,17 +27,15 @@ try {
                 }
             }
         }
-        echo "<h2 style='color:green;'>Import Finished! Checking existing tables:</h2>";
-        
+        echo "<h2 style='color:green;'>Import Finished! Active tables:</h2>";
         $tables = $pdo->query("SHOW TABLES")->fetchAll(PDO::FETCH_COLUMN);
         echo "<ul>";
         foreach ($tables as $table) {
             echo "<li><strong>$table</strong></li>";
         }
         echo "</ul>";
-
     } else {
-        echo "<h2 style='color:red;'>database.sql file not found!</h2>";
+        echo "<h2 style='color:red;'>No database.sql or schema.sql file found!</h2>";
     }
 } catch (PDOException $e) {
     echo "<h2 style='color:red;'>Connection Error:</h2> " . $e->getMessage();
