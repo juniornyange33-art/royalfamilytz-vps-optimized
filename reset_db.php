@@ -14,7 +14,7 @@ try {
     $pdo->exec("TRUNCATE TABLE users;");
     $pdo->exec("SET FOREIGN_KEY_CHECKS = 1;");
 
-    echo "<h2 style='color:green;'>Users table cleared successfully! You can sign up again.</h2>";
+    echo "<h2 style='color:green;'>Users table cleared! You can register again now.</h2>";
 } catch (PDOException $e) {
     echo "<h2 style='color:red;'>Database Error:</h2> " . $e->getMessage();
 }
