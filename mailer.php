@@ -9,15 +9,14 @@ function mail_config(): array
     $app = require __DIR__ . '/config.php';
     $mail = $app['mail'] ?? [];
 
-    // Fallback to environment variables if config is empty
     return [
-        'smtp_host'     => $mail['smtp_host']     ?? $mail['SMTP_HOST']     ?? getenv('SMTP_HOST')     ?: 'smtp.gmail.com',
-        'smtp_port'     => $mail['smtp_port']     ?? $mail['SMTP_PORT']     ?? getenv('SMTP_PORT')     ?: 587,
-        'smtp_security' => $mail['smtp_security'] ?? $mail['SMTP_SECURITY'] ?? getenv('SMTP_SECURITY') ?: 'tls',
-        'smtp_user'     => $mail['smtp_user']     ?? $mail['SMTP_USER']     ?? getenv('SMTP_USER')     ?: 'royalfamilytz.org@gmail.com',
-        'smtp_password' => $mail['smtp_password'] ?? $mail['SMTP_PASS']     ?? $mail['SMTP_PASSWORD'] ?? getenv('SMTP_PASSWORD') ?: getenv('SMTP_PASS') ?: '',
-        'from'          => $mail['from']          ?? $mail['MAIL_FROM']     ?? getenv('MAIL_FROM')     ?: 'royalfamilytz.org@gmail.com',
-        'from_name'     => $mail['from_name']     ?? $mail['MAIL_FROM_NAME']?? getenv('MAIL_FROM_NAME')?: 'Royal Family TZ',
+        'smtp_host'     => $mail['smtp_host']     ?? getenv('SMTP_HOST')     ?: 'smtp.gmail.com',
+        'smtp_port'     => (int)($mail['smtp_port'] ?? getenv('SMTP_PORT')     ?: 465),
+        'smtp_security' => $mail['smtp_security'] ?? getenv('SMTP_SECURITY') ?: 'ssl',
+        'smtp_user'     => $mail['smtp_user']     ?? getenv('SMTP_USER')     ?: 'royalfamilytz.org@gmail.com',
+        'smtp_password' => $mail['smtp_password'] ?? getenv('SMTP_PASSWORD') ?: getenv('SMTP_PASS') ?: '',
+        'from'          => $mail['from']          ?? getenv('MAIL_FROM')     ?: 'royalfamilytz.org@gmail.com',
+        'from_name'     => $mail['from_name']     ?? getenv('MAIL_FROM_NAME')?: 'Royal Family TZ',
     ];
 }
 
