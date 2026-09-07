@@ -46,21 +46,31 @@ function smtp_command($socket, string $command, array $accepted = [2, 3]): strin
 }
 function send_email(string $to, string $subject, string $body): bool
 {
-    if (!mail_configured()) return false;
+    $apiKey = getenv('RESEND_API_KEY');
+    if (empty($apiKey)) return false;
 
-    $c = mail_config();
-    $host = (string)$c['smtp_host'];
-    $port = (int)($c['smtp_port'] ?? 465);
-    $secure = strtolower((string)($c['smtp_security'] ?? 'ssl'));
+    $payload = json_encode([
+        'from'    => 'Royal Family TZ <onboarding@resend.dev>',
+        'to'      => [$to],
+        'subject' => $subject,
+        'text'    => $body,
+    ]);
 
-    $transport = ($secure === 'ssl' || $port === 465) ? 'ssl://' . $host : 'tcp://' . $host;
+    $ch = curl_init('https://api.resend.com/emails');
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Authorization: Bearer ' . $apiKey,
+        'Content-Type: application/json',
+    ]);
 
-    $context = stream_context_create([
-        'ssl' => [
-            'verify_peer'       => false,
-            'verify_peer_name'  => false,
-            'allow_self_signed' => true
-        ]
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+
+    return $httpCode >= 200 && $httpCode < 300;
+}
     ]);
 
     $socket = @stream_socket_client(
