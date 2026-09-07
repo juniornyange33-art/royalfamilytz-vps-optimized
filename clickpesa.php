@@ -51,7 +51,7 @@ function cp_normalize_phone(string $phone): string {
 }
 function cp_start_payment(float $amount, string $method, string $phone, string $orderReference, string $name, string $email): array {
     if (cp_config('CLICKPESA_CLIENT_ID') === '' || cp_config('CLICKPESA_API_KEY') === '') throw new RuntimeException('ClickPesa credentials are not configured in the server environment.');
-    if ($method === 'mobile') {
+    if (in_array($method, ['mobile', 'mpesa', 'tigopesa', 'airtelmoney', 'halopesa'], true)) {
         $payload = ['amount' => (string)$amount, 'currency' => 'TZS', 'orderReference' => $orderReference, 'phoneNumber' => cp_normalize_phone($phone)];
         cp_request('POST', '/payments/preview-ussd-push-request', $payload);
         return cp_request('POST', '/payments/initiate-ussd-push-request', $payload);
