@@ -6,14 +6,17 @@ require_once __DIR__ . '/db.php';
 try {
     $pdo = db();
     
-    // Attempt to add the 'name' column directly
-    $pdo->exec("ALTER TABLE users ADD COLUMN name VARCHAR(255) NULL AFTER id;");
-    echo "<h2 style='color:green;'>SUCCESS: Added 'name' column to users table!</h2>";
+    // Add password_hash column if missing
+    try {
+        $pdo->exec("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NULL AFTER password;");
+    } catch (Throwable $e) {}
+
+    // Add name column if missing
+    try {
+        $pdo->exec("ALTER TABLE users ADD COLUMN name VARCHAR(255) NULL AFTER id;");
+    } catch (Throwable $e) {}
+
+    echo "<h2 style='color:green;'>SUCCESS: Table columns updated!</h2>";
 } catch (Throwable $e) {
-    // If column already exists, treat as success
-    if (str_contains($e->getMessage(), 'Duplicate column name') || str_contains($e->getMessage(), '1060')) {
-        echo "<h2 style='color:green;'>SUCCESS: Column 'name' already exists!</h2>";
-    } else {
-        echo "<h2 style='color:red;'>ERROR:</h2> " . $e->getMessage();
-    }
+    echo "<h2 style='color:red;'>ERROR:</h2> " . $e->getMessage();
 }
