@@ -22,8 +22,8 @@ Notes and diagnostics
 - The server must allow outbound TCP connections on the SMTP port (465/587) for SMTP fallback.
 
 Ticket attachments
-- Trip ticket emails attempt to attach a PNG ticket with a QR code.
-- The QR image is fetched at send time from Google Chart API. Ensure the server has outbound network access to `chart.googleapis.com` for QR generation. If the QR fetch fails, the ticket email will still be sent without the image.
+- Trip ticket emails include a single-page PDF ticket attachment with booking details and the order reference.
+- If you prefer QR codes embedded inside the PDF, enable outbound access to `chart.googleapis.com` and ensure an image library (Imagick) is available; I can update the generator to embed PNG QR images into the PDF when those are available.
 
 Security
 - Do NOT commit secrets to the repository. Use environment variables or secure deployment secrets.
