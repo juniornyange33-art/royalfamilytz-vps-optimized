@@ -1,41 +1,52 @@
 <?php
-/**
- * Royal Family TZ application configuration.
- */
 declare(strict_types=1);
 
-$localConfig = is_file(__DIR__ . '/local-config.php')
-    ? (require __DIR__ . '/local-config.php')
-    : [];
+// Load local .env file if it exists locally
+$envFile = __DIR__ . '/.env';
+if (file_exists($envFile)) {
+    $lines = file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($lines as $line) {
+        if (str_starts_with(trim($line), '#')) continue;
+        if (str_contains($line, '=')) {
+            list($key, $value) = explode('=', $line, 2);
+            putenv(sprintf('%s=%s', trim($key), trim($value, '"\' ')));
+        }
+    }
+}
 
 return [
-    'app_name' => 'Royal Family TZ',
-    'timezone' => 'Africa/Dar_es_Salaam',
+    'app_url' => getenv('APP_URL') ?: 'https://royalfamilytz.org',
+
     'database' => [
-        'driver' => getenv('DB_DRIVER') ?: ($localConfig['DB_DRIVER'] ?? 'mysql'),
-        'host'   => getenv('DB_HOST') ?: ($localConfig['DB_HOST'] ?? 'mysql-1b6a03ce-juniornyange33-b2e7.aivencloud.com'),
-        'port'   => getenv('DB_PORT') ?: ($localConfig['DB_PORT'] ?? '26708'),
-        'name'   => getenv('DB_NAME') ?: ($localConfig['DB_NAME'] ?? 'defaultdb'),
-        'user'   => getenv('DB_USER') ?: ($localConfig['DB_USER'] ?? 'avnadmin'),
-        'password' => getenv('DB_PASS') !== false && getenv('DB_PASS') !== ''
-            ? (string)getenv('DB_PASS')
-            : (string)($localConfig['DB_PASS'] ?? ''),
-        'charset' => 'utf8mb4',
+        'driver'   => getenv('DB_DRIVER') ?: 'mysql',
+        'host'     => getenv('DB_HOST') ?: 'mysql-1b6a03ce-juniornyange33-b2e7.aivencloud.com',
+        'port'     => getenv('DB_PORT') ?: '26708',
+        'name'     => getenv('DB_NAME') ?: 'defaultdb',
+        'user'     => getenv('DB_USER') ?: 'avnadmin',
+        'password' => getenv('DB_PASS') !== false ? (string)getenv('DB_PASS') : '',
+        'charset'  => 'utf8mb4',
     ],
-    'payments' => [
-        'clickpesa_client_id' => getenv('CLICKPESA_CLIENT_ID') ?: ($localConfig['CLICKPESA_CLIENT_ID'] ?? ''),
-        'clickpesa_api_key'   => getenv('CLICKPESA_API_KEY') ?: ($localConfig['CLICKPESA_API_KEY'] ?? ''),
-        'stripe_secret_key'   => getenv('STRIPE_SECRET_KEY') ?: '',
-        'paypal_client_id'    => getenv('PAYPAL_CLIENT_ID') ?: '',
+
+    'google' => [
+        'client_id'     => getenv('GOOGLE_CLIENT_ID') ?: '',
+        'client_secret' => getenv('GOOGLE_CLIENT_SECRET') ?: '',
+        'redirect_uri'  => (getenv('APP_URL') ?: 'https://royalfamilytz.org') . '/login/google/callback',
     ],
-    'mail' => [
-        'from'          => getenv('MAIL_FROM') ?: ($localConfig['MAIL_FROM'] ?? 'hello@royalfamilytz.org'),
-        'from_name'     => getenv('MAIL_FROM_NAME') ?: ($localConfig['MAIL_FROM_NAME'] ?? 'Royal Family TZ'),
-        'smtp_host'     => getenv('SMTP_HOST') ?: ($localConfig['SMTP_HOST'] ?? ''),
-        'smtp_port'     => getenv('SMTP_PORT') ?: ($localConfig['SMTP_PORT'] ?? '587'),
-        'smtp_security' => getenv('SMTP_SECURITY') ?: ($localConfig['SMTP_SECURITY'] ?? 'tls'),
-        'smtp_user'     => getenv('SMTP_USER') ?: ($localConfig['SMTP_USER'] ?? ''),
-        'smtp_password' => getenv('SMTP_PASSWORD') !== false ? (string)getenv('SMTP_PASSWORD') : (string)($localConfig['SMTP_PASSWORD'] ?? ''),
+
+    'clickpesa' => [
+        'client_id' => getenv('CLICKPESA_CLIENT_ID') ?: '',
+        'api_key'   => getenv('CLICKPESA_API_KEY') ?: '',
+        'checksum'  => getenv('CLICKPESA_CHECKSUM') ?: '',
     ],
+
+    'smtp' => [
+        'host'       => getenv('SMTP_HOST') ?: 'smtp.gmail.com',
+        'port'       => (int)(getenv('SMTP_PORT') ?: 587),
+        'security'   => getenv('SMTP_SECURITY') ?: 'tls',
+        'username'   => getenv('SMTP_USER') ?: 'royalfamilytz.org@gmail.com',
+        'password'   => getenv('SMTP_PASSWORD') ?: '',
+        'from_email' => getenv('MAIL_FROM') ?: 'juniornyange33@gmail.com',
+        'from_name'  => getenv('MAIL_FROM_NAME') ?: 'Royal Family TZ',
+    ],
+'contact_email' => 'juniornyange33@ghmail.com',
 ];
-?>
