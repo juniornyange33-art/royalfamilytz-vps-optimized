@@ -100,8 +100,8 @@ if (!function_exists('send_email')) {
         // EHLO
         $write('EHLO ' . ($_SERVER['HTTP_HOST'] ?? 'localhost'));
         while (($line = trim($read())) !== '') { if (substr($line, 0, 3) === '250') { if (strpos($line, 'STARTTLS') !== false) $hasStartTls = true; } }
-        if (($secure === 'tls' || (!empty($hasStartTls) && $secure === 'tls')) && empty($transport)) {
-            $write('STARTTLS'); $tlsResp = trim($read()); if (substr($tlsResp,0,3) !== '220') { fclose($fp); return false; } stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+        if ($secure === 'tls') {
+            $write('STARTTLS'); $tlsResp = trim($read()); if (substr($tlsResp,0,3) !== '220') { fclose($fp); error_log('SMTP STARTTLS failed: ' . $tlsResp); return false; } stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
             $write('EHLO ' . ($_SERVER['HTTP_HOST'] ?? 'localhost')); while (($line = trim($read())) !== '') {}
         }
 
@@ -137,9 +137,10 @@ if (!function_exists('send_email')) {
         $msg .= "--{$bound}--\r\n.";
 
         $write($msg);
-        $read();
+        $sendResp = trim($read());
         $write('QUIT');
         fclose($fp);
+        if (substr($sendResp, 0, 3) !== '250') { error_log('SMTP send failed: ' . $sendResp); return false; }
         return true;
     }
 }
