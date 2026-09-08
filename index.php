@@ -53,6 +53,18 @@ if ($path === '/api/transaction-status' && $_SERVER['REQUEST_METHOD'] === 'GET')
     } catch (Throwable $e) { http_response_code(400); echo json_encode(['error' => $e->getMessage()]); }
     exit;
 }
+if ($path === '/api/mail-test' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+    header('Content-Type: application/json; charset=utf-8');
+    try {
+        $to = trim((string)($_GET['to'] ?? '')) ?: (mail_config()['from'] ?? '');
+        if ($to === '') throw new RuntimeException('No recipient specified and no default from address configured.');
+        $subject = 'Royal Family TZ — mail diagnostics';
+        $body = "This is a test message from Royal Family TZ. If you received this, mailing is configured.\n\n" . json_encode(['time'=>date('c'),'host'=>gethostname()], JSON_PRETTY_PRINT);
+        $ok = mail_configured() && send_email($to, $subject, $body);
+        echo json_encode(['ok' => (bool)$ok, 'to' => $to, 'mail_configured' => mail_configured(), 'smtp' => array_filter(mail_config(), fn($k)=>in_array($k, ['smtp_host','smtp_port','smtp_security','from','from_name']), ARRAY_FILTER_USE_KEY)]);
+    } catch (Throwable $e) { http_response_code(500); echo json_encode(['error' => $e->getMessage()]); }
+    exit;
+}
 if (in_array($path, ['/admin/report-users.csv', '/admin/report-transactions.csv'], true) && $user && $user['role'] === 'admin') {
     header('Content-Type: text/csv; charset=utf-8'); header('Content-Disposition: attachment; filename=' . ($path === '/admin/report-users.csv' ? 'royalfamilytz-users.csv' : 'royalfamilytz-transactions.csv')); $out = fopen('php://output', 'w');
     if ($path === '/admin/report-users.csv') { fputcsv($out, ['User ID','Name','Email','Role','Membership ID','Membership Active','Created At']); foreach (db()->query('SELECT id, name, email, role, membership_id, membership_active, created_at FROM users ORDER BY created_at DESC') as $row) fputcsv($out, [$row['id'], $row['name'], $row['email'], $row['role'], $row['membership_id'] ?? '', $row['membership_active'] ? 'Yes' : 'No', $row['created_at']]); }
@@ -226,8 +238,64 @@ function send_trip_ticket_email(string $orderRef): void {
               . "Safe travels,\n"
               . "Royal Family TZ Team";
 
-        send_email((string)$data['email'], $subject, $body);
+        // Attempt to generate a simple PNG ticket with QR and attach
+        $ticketPng = null;
+        try {
+            $ticketPng = generate_ticket_png([
+                'ticket_id' => 'TKT-' . str_pad((string)$data['ticket_id'], 6, '0', STR_PAD_LEFT),
+                'name' => $data['name'],
+                'trip_title' => $data['trip_title'],
+                'destination' => $data['destination'],
+                'date' => $data['trip_date'] ? date('F j, Y', strtotime($data['trip_date'])) : 'TBA',
+                'package' => $data['pkg_name'],
+                'order' => $orderRef,
+            ]);
+        } catch (Throwable $e) { $ticketPng = null; }
+
+        $attachments = [];
+        if ($ticketPng !== null) $attachments[] = ['name'=>'ticket-'.$orderRef.'.png','type'=>'image/png','data'=>$ticketPng];
+
+        send_email((string)$data['email'], $subject, $body, $attachments);
     } catch (Throwable $e) {}
+}
+
+function generate_ticket_png(array $info): string {
+    $w = 820; $h = 380;
+    $img = imagecreatetruecolor($w, $h);
+    $bg = imagecolorallocate($img, 255, 255, 255);
+    $accent = imagecolorallocate($img, 40, 87, 67);
+    $muted = imagecolorallocate($img, 102, 115, 108);
+    $black = imagecolorallocate($img, 20, 20, 20);
+    imagefilledrectangle($img, 0, 0, $w, $h, $bg);
+
+    // Left panel
+    imagefilledrectangle($img, 20, 20, $w-220, $h-20, imagecolorallocate($img, 245, 248, 246));
+    // Title
+    imagestring($img, 5, 40, 30, 'Royal Family TZ - Trip Ticket', $accent);
+    imagestring($img, 4, 40, 72, $info['trip_title'] ?? 'Trip', $black);
+    imagestring($img, 3, 40, 110, 'Passenger: ' . ($info['name'] ?? 'Guest'), $black);
+    imagestring($img, 3, 40, 138, 'Ticket: ' . ($info['ticket_id'] ?? ''), $black);
+    imagestring($img, 3, 40, 166, 'Package: ' . ($info['package'] ?? ''), $muted);
+    imagestring($img, 3, 40, 190, 'Destination: ' . ($info['destination'] ?? ''), $muted);
+    imagestring($img, 3, 40, 214, 'Date: ' . ($info['date'] ?? ''), $muted);
+    imagestring($img, 2, 40, $h-60, 'Order Ref: ' . ($info['order'] ?? ''), $muted);
+
+    // QR (attempt to fetch from Google Charts)
+    $qrData = 'TICKET|' . ($info['ticket_id'] ?? '') . '|' . ($info['order'] ?? '');
+    $qrUrl = 'https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=' . rawurlencode($qrData);
+    $qrRaw = @file_get_contents($qrUrl);
+    if ($qrRaw !== false) {
+        $qrImg = @imagecreatefromstring($qrRaw);
+        if ($qrImg) imagecopyresampled($img, $qrImg, $w-190, 80, 0, 0, 160, 160, imagesx($qrImg), imagesy($qrImg));
+        if (isset($qrImg) && is_resource($qrImg)) imagedestroy($qrImg);
+    } else {
+        // placeholder box
+        imagerectangle($img, $w-200, 80, $w-40, 240, $muted);
+        imagestring($img, 3, $w-180, 150, 'QR Unavailable', $muted);
+    }
+
+    ob_start(); imagepng($img); $data = ob_get_clean(); imagedestroy($img);
+    return $data;
 }
     
     // Ensure we have a membership_tier column for tier-aware tickets

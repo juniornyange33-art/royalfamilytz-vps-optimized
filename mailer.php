@@ -36,21 +36,32 @@ if (!function_exists('mail_configured')) {
 }
 
 if (!function_exists('send_email')) {
-    function send_email(string $to, string $subject, string $body): bool
+    /**
+     * Send an email. Supports Resend API (if RESEND_API_KEY) or SMTP fallback.
+     * $attachments is an array of ['name' => string, 'type' => mime-type, 'data' => raw-binary]
+     */
+    function send_email(string $to, string $subject, string $body, array $attachments = []): bool
     {
         $resendKey = getenv('RESEND_API_KEY');
+        $from = mail_config()['from'] ?? 'royalfamilytz.org@gmail.com';
+        $fromName = mail_config()['from_name'] ?? 'Royal Family TZ';
         if (!empty($resendKey)) {
-            $payload = json_encode([
-                'from'    => 'Royal Family TZ <onboarding@resend.dev>',
+            $payload = [
+                'from'    => $fromName . ' <' . $from . '>',
                 'to'      => [$to],
                 'subject' => $subject,
                 'text'    => $body,
-            ]);
+            ];
+            if (!empty($attachments)) {
+                $payload['attachments'] = array_map(function($att) {
+                    return ['type' => $att['type'] ?? 'application/octet-stream', 'name' => $att['name'], 'data' => base64_encode($att['data'])];
+                }, $attachments);
+            }
 
             $ch = curl_init('https://api.resend.com/emails');
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_POST, true);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
             curl_setopt($ch, CURLOPT_HTTPHEADER, [
                 'Authorization: Bearer ' . $resendKey,
                 'Content-Type: application/json',
@@ -60,7 +71,6 @@ if (!function_exists('send_email')) {
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
 
-            // Log error if API request fails
             if ($httpCode < 200 || $httpCode >= 300) {
                 error_log("Resend Mail Error (HTTP {$httpCode}): " . $response);
             }
@@ -68,6 +78,68 @@ if (!function_exists('send_email')) {
             return $httpCode >= 200 && $httpCode < 300;
         }
 
-        return false;
+        // Fallback: send via SMTP using basic socket (supports AUTH LOGIN)
+        $cfg = mail_config();
+        $host = $cfg['smtp_host'] ?? '';
+        $port = (int)($cfg['smtp_port'] ?? 465);
+        $secure = $cfg['smtp_security'] ?? 'ssl';
+        $user = $cfg['smtp_user'] ?? '';
+        $pass = $cfg['smtp_password'] ?? '';
+
+        if (!$host || !$user || !$pass) return false;
+
+        $errno = 0; $errstr = '';
+        $transport = ($secure === 'ssl') ? 'ssl://' . $host : $host;
+        $fp = stream_socket_client($transport . ':' . $port, $errno, $errstr, 15, STREAM_CLIENT_CONNECT);
+        if (!$fp) { error_log("SMTP connect failed: {$errno} {$errstr}"); return false; }
+
+        $read = fn() => fgets($fp, 515);
+        $write = fn($s) => fwrite($fp, $s . "\r\n");
+
+        $server = trim($read());
+        // EHLO
+        $write('EHLO ' . ($_SERVER['HTTP_HOST'] ?? 'localhost'));
+        while (($line = trim($read())) !== '') { if (substr($line, 0, 3) === '250') { if (strpos($line, 'STARTTLS') !== false) $hasStartTls = true; } }
+        if (($secure === 'tls' || (!empty($hasStartTls) && $secure === 'tls')) && empty($transport)) {
+            $write('STARTTLS'); $tlsResp = trim($read()); if (substr($tlsResp,0,3) !== '220') { fclose($fp); return false; } stream_socket_enable_crypto($fp, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+            $write('EHLO ' . ($_SERVER['HTTP_HOST'] ?? 'localhost')); while (($line = trim($read())) !== '') {}
+        }
+
+        $write('AUTH LOGIN'); $read(); $write(base64_encode($user)); $read(); $write(base64_encode($pass)); $authResp = trim($read()); if (substr($authResp,0,3) !== '235') { fclose($fp); error_log('SMTP auth failed: ' . $authResp); return false; }
+
+        $bound = '==BOUND_' . md5(time()) . '==';
+        // Headers
+        $headers = [];
+        $headers[] = 'From: ' . $fromName . ' <' . $from . '>';
+        $headers[] = 'To: ' . $to;
+        $headers[] = 'Subject: ' . $subject;
+        $headers[] = 'MIME-Version: 1.0';
+        $headers[] = 'Content-Type: multipart/mixed; boundary="' . $bound . '"';
+
+        $write('MAIL FROM:<' . $from . '>'); $read();
+        $write('RCPT TO:<' . $to . '>'); $read();
+        $write('DATA'); $read();
+
+        $msg = implode("\r\n", $headers) . "\r\n\r\n";
+        $msg .= "--{$bound}\r\n";
+        $msg .= "Content-Type: text/plain; charset=utf-8\r\n\r\n";
+        $msg .= $body . "\r\n\r\n";
+        foreach ($attachments as $att) {
+            $name = $att['name'] ?? 'attachment.bin';
+            $type = $att['type'] ?? 'application/octet-stream';
+            $data = base64_encode($att['data']);
+            $msg .= "--{$bound}\r\n";
+            $msg .= "Content-Type: {$type}; name=\"{$name}\"\r\n";
+            $msg .= "Content-Transfer-Encoding: base64\r\n";
+            $msg .= "Content-Disposition: attachment; filename=\"{$name}\"\r\n\r\n";
+            $msg .= chunk_split($data, 76, "\r\n") . "\r\n\r\n";
+        }
+        $msg .= "--{$bound}--\r\n.";
+
+        $write($msg);
+        $read();
+        $write('QUIT');
+        fclose($fp);
+        return true;
     }
 }
