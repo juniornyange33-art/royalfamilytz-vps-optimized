@@ -30,7 +30,30 @@ if ($path === '/api/clickpesa/webhook' && $_SERVER['REQUEST_METHOD'] === 'POST')
             $event = strtoupper(trim((string)($payload['event'] ?? ''))); $providerStatus = strtoupper(trim((string)($data['status'] ?? ''))); $status = ($event === 'PAYMENT RECEIVED' || ($event === '' && $providerStatus === 'SUCCESS')) ? 'paid' : (($event === 'PAYMENT FAILED' || ($event === '' && $providerStatus === 'FAILED')) ? 'failed' : null);
             if ($status) {
                 db()->prepare('UPDATE transactions SET status = ?, provider_ref = COALESCE(provider_ref, ?), failure_message = ? WHERE order_reference = ?')->execute([$status, $data['id'] ?? null, $data['message'] ?? null, $reference]);
-                if ($status === 'paid') { db()->prepare('UPDATE users u JOIN transactions t ON t.user_id = u.id SET u.membership_active = IF(t.type = \'subscription\', 1, u.membership_active), u.membership_id = IF(t.type = \'subscription\' AND u.membership_id IS NULL, CONCAT(\'RFTZ-\', LPAD(u.id, 6, \'0\')), u.membership_id) WHERE t.order_reference = ?')->execute([$reference]); try { db()->prepare('UPDATE trip_bookings b JOIN transactions t ON t.id = b.transaction_id SET b.status = \'paid\' WHERE t.order_reference = ?')->execute([$reference]); } catch (Throwable $ignore) {} }
+                if ($status === 'paid') {
+                    db()->prepare('UPDATE users u JOIN transactions t ON t.user_id = u.id SET u.membership_active = IF(t.type = \'subscription\', 1, u.membership_active), u.membership_id = IF(t.type = \'subscription\' AND u.membership_id IS NULL, CONCAT(\'RFTZ-\', LPAD(u.id, 6, \'0\')), u.membership_id) WHERE t.order_reference = ?')->execute([$reference]);
+                    try {
+                        db()->prepare('UPDATE trip_bookings b JOIN transactions t ON t.id = b.transaction_id SET b.status = \'paid\' WHERE t.order_reference = ?')->execute([$reference]);
+                        // Try to email a ticket to the user for paid trip bookings
+                        $s = db()->prepare('SELECT b.id AS booking_id, b.guests, b.user_id, t.id AS transaction_id, t.type AS transaction_type, t.amount AS transaction_amount, tr.title AS trip_title, u.email AS user_email, u.name AS user_name, u.membership_id FROM trip_bookings b JOIN transactions t ON t.id = b.transaction_id JOIN trips tr ON tr.id = b.trip_id JOIN users u ON u.id = b.user_id WHERE t.order_reference = ? LIMIT 1');
+                        $s->execute([$reference]);
+                        $booking = $s->fetch();
+                        if ($booking && mail_configured()) {
+                            // Determine membership tier from the user's latest successful subscription, if any
+                            $tier = null;
+                            try {
+                                $st = db()->prepare("SELECT tier FROM transactions WHERE user_id = ? AND type = 'subscription' AND status = 'succeeded' ORDER BY created_at DESC LIMIT 1");
+                                $st->execute([(int)$booking['user_id']]);
+                                $tier = $st->fetchColumn() ?: null;
+                            } catch (Throwable $ignore) { $tier = null; }
+
+                            $tierLabel = $tier === 'supporter' ? 'Silver 🥈' : ($tier === 'patron' ? 'Patron 🥇' : 'Royal Family (spring green)');
+                            $ticketCode = 'TKT-' . strtoupper(substr((string)$reference, 0, 10)) . '-' . (int)$booking['booking_id'];
+                            $body = "Hello {$booking['user_name']},\n\nYour booking for {$booking['trip_title']} is confirmed.\n\nBooking reference: {$reference}\nTicket code: {$ticketCode}\nGuests: {$booking['guests']}\nMembership: {$tierLabel}\nMembership ID: " . ($booking['membership_id'] ?? 'None') . "\n\nPlease present this ticket code at the event.\n\nThank you for supporting Royal Family TZ.";
+                            try { send_email((string)$booking['user_email'], 'Your trip ticket — ' . $booking['trip_title'], $body); } catch (Throwable $ignore) {}
+                        }
+                    } catch (Throwable $ignore) {}
+                }
                 if ($status === 'failed') { try { db()->prepare('UPDATE trip_bookings b JOIN transactions t ON t.id = b.transaction_id SET b.status = \'cancelled\' WHERE t.order_reference = ?')->execute([$reference]); } catch (Throwable $ignore) {} }
             }
         }
