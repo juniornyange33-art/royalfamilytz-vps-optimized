@@ -674,11 +674,32 @@ case '/members':
                 <button class="btn gold" type="submit">Pay & Issue Email Ticket</button>
             </form>' : '<div class="center"><p>Please log in to purchase trip tickets.</p><a class="btn" href="/login">Log In Now</a></div>') . '
         </div></div>'; 
-        break;
+        case '/admin/reports':
+    $userCount = $memberCount = $paidTotal = $pendingTotal = 0; 
+    $transactionRows = ''; 
+    $memberRows = ''; 
+    try { 
+        $userCount = (int)db()->query('SELECT COUNT(*) FROM users')->fetchColumn(); 
+        $memberCount = (int)db()->query("SELECT COUNT(*) FROM users WHERE membership_active = 1")->fetchColumn(); 
+        $paidTotal = (float)db()->query("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE status = 'paid'")->fetchColumn(); 
+        $pendingTotal = (float)db()->query("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE status = 'pending'")->fetchColumn(); 
+        foreach (db()->query('SELECT name, email, role, membership_id, membership_active, created_at FROM users ORDER BY created_at DESC') as $member) {
+            $memberRows .= '<tr><td>'.e($member['name']).'</td><td>'.e($member['email']).'</td><td>'.e($member['role']).'</td><td>'.e($member['membership_id'] ?? '—').'</td><td>'.($member['membership_active']?'Active':'Inactive').'</td></tr>'; 
+        }
+        foreach (db()->query('SELECT t.order_reference, COALESCE(u.name, \'Guest\') AS user_name, COALESCE(u.email, \'\') AS email, t.type, t.tier, t.amount, t.currency, t.status, t.created_at FROM transactions t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.created_at DESC') as $tx) {
+            $transactionRows .= '<tr><td>'.e($tx['order_reference']).'</td><td>'.e($tx['user_name']).'<br><small>'.e($tx['email']).'</small></td><td>'.e($tx['type']).'</td><td>'.e($tx['tier'] ?? '—').'</td><td>'.e($tx['currency'].' '.number_format((float)$tx['amount'],2)).'</td><td>'.e($tx['status']).'</td><td>'.e($tx['created_at']).'</td></tr>';
+        }
+    } catch (Throwable $e) { 
+        $memberRows='<tr><td colspan="5">Database unavailable.</td></tr>'; 
+        $transactionRows='<tr><td colspan="7">Database unavailable.</td></tr>'; 
+    } 
+    $content='<div class="page"><p class="eyebrow">Admin reporting</p><h1>Reports</h1><div class="stats"><div class="stat"><strong>'.$userCount.'</strong><span>Total users</span></div><div class="stat"><strong>'.$memberCount.'</strong><span>Active memberships</span></div><div class="stat"><strong>TZS '.number_format($paidTotal,2).'</strong><span>Paid transactions</span></div><div class="stat"><strong>TZS '.number_format($pendingTotal,2).'</strong><span>Pending transactions</span></div></div><div class="card"><h2>Downloads</h2><a class="btn gold" href="/admin/reports/print" target="_blank">Export branded PDF</a><a class="btn" href="/admin/report-users.csv">Download users CSV</a><a class="btn gold" href="/admin/report-transactions.csv">Download transactions CSV</a></div><div class="card"><h2>Users and membership IDs</h2><div style="overflow:auto"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Membership ID</th><th>Status</th></tr></thead><tbody>'.$memberRows.'</tbody></table></div></div><div class="card"><h2>Who transacted</h2><div style="overflow:auto"><table><thead><tr><th>Reference</th><th>User</th><th>Type</th><th>Package/Tier</th><th>Amount</th><th>Status</th><th>Date</th></tr></thead><tbody>'.$transactionRows.'</tbody></table></div></div></div>'; 
+    break;
 
-    default:
-        $content = '<div class="page center"><h1>Page Not Found</h1><a class="btn" href="/">Return Home</a></div>';
-        break;
+default:
+    header('HTTP/1.0 404 Not Found');
+    $content = '<div class="page"><h1>404 Page Not Found</h1><p>The page you are looking for does not exist.</p><a class="btn" href="/">Return Home</a></div>';
+    break;
 }
 
-layout('Royal Family TZ', $content, $path, $user, $flash);
+layout($path === '/' ? 'Home' : ucfirst(ltrim($path, '/')), $content, $path, $user, $flash);
