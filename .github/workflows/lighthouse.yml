@@ -1,0 +1,18 @@
+name: Lighthouse Audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master ]
+
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Lighthouse audit
+        uses: treosh/lighthouse-ci-action@v8
+        with:
+          url: ${{ secrets.LIGHTHOUSE_TARGET }}
+          output: html
+        env:
+          LIGHTHOUSE_CHROMIUM_FLAGS: --no-sandbox
