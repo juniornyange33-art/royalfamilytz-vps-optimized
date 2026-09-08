@@ -15,11 +15,19 @@ export async function sendEmail({ to, subject, html }) {
   return resend.emails.send({ from: FROM, to, subject, html })
 }
 
-export function membershipReceiptEmail({ membershipId, amount, currency }) {
+export function membershipReceiptEmail({ membershipId, amount, currency, tier }) {
+  const colors = {
+    royalfamilymember: 'springgreen',
+    supporter: 'silver',
+    patron: 'gold',
+  }
+  const emojis = { royalfamilymember: '', supporter: '🥈', patron: '🥇' }
+  const color = colors[tier] || 'black'
+  const emoji = emojis[tier] || ''
   return {
     subject: 'Welcome to Royal Family TZ — your membership is active',
-    html: `<p>Your membership is now active.</p>
-           <p><b>Membership ID:</b> ${membershipId}</p>
+    html: `<p>Your membership is now active. ${emoji}</p>
+           <p><b>Membership ID:</b> <span style="color:${color}; font-weight:700">${membershipId}</span></p>
            <p><b>Amount paid:</b> ${currency} ${amount}</p>`,
   }
 }

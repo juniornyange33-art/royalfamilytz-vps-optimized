@@ -5,7 +5,12 @@ import { createStripeCheckoutSession } from '../services/payments/stripeService.
 import { createPayPalOrder, capturePayPalOrder } from '../services/payments/paypalService.js'
 import { createMobileMoneyCheckout, verifyWebhookChecksum } from '../services/payments/clickpesaService.js'
 
-const TIER_PRICES = { standard: 10000, supporter: 25000 } // TZS
+// Prices for tiers (TZS). Values are per-period.
+const TIER_PRICES = {
+  royalfamilymember: { monthly: 2000, yearly: 12000 },
+  supporter: { monthly: 5000, yearly: 50000 },
+  patron: { monthly: 10000, yearly: 50000 },
+}
 
 // Normalizes local Tanzanian phone formats (07XXXXXXXX, +255..., 255...)
 // into the "255XXXXXXXXX" shape ClickPesa expects (country code, no plus).
@@ -18,12 +23,12 @@ function normalizeTzPhone(phone) {
 
 // POST /api/payments/subscribe — starts a membership payment.
 export async function startSubscription(req, res) {
-  const { method, phone, tier = 'standard' } = req.body
-  const amount = TIER_PRICES[tier] || TIER_PRICES.standard
+  const { method, phone, tier = 'royalfamilymember', period = 'monthly' } = req.body
+  const amount = (TIER_PRICES[tier] && TIER_PRICES[tier][period]) || (TIER_PRICES.royalfamilymember.monthly)
   const uid = req.user.uid
 
   const txnRef = await db.collection('transactions').add({
-    uid, userEmail: req.user.email, type: 'subscription', tier,
+    uid, userEmail: req.user.email, type: 'subscription', tier, period,
     amount, currency: 'TZS', method, status: 'pending',
     createdAt: new Date().toISOString(),
   })
@@ -74,7 +79,7 @@ export async function activateMembership(txnId) {
   await db.collection('users').doc(txn.uid).update({ membershipActive: true, membershipId })
   await txnRef.update({ status: 'succeeded' })
 
-  const { subject, html } = membershipReceiptEmail({ membershipId, amount: txn.amount, currency: txn.currency })
+  const { subject, html } = membershipReceiptEmail({ membershipId, amount: txn.amount, currency: txn.currency, tier: txn.tier })
   await sendEmail({ to: txn.userEmail, subject, html })
 }
 
