@@ -680,4 +680,4 @@ case '/members':
         break;
 }
 
-layout('Royal Family TZ', $content, $path,
+layout('Royal Family TZ', $content, $path, $user, $flash);
