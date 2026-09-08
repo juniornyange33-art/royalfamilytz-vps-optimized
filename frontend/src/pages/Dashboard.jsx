@@ -20,9 +20,14 @@ export default function Dashboard() {
           ) : (
             <>
               <p className="text-ink/60 font-semibold text-lg mb-3">Not a paying member yet</p>
-              <Link to="/subscribe" className="inline-block bg-gold text-ink px-4 py-2 rounded-full text-sm font-semibold">
-                Subscribe now
-              </Link>
+              <div className="flex gap-3">
+                <Link to="/members" className="inline-block border border-ink/10 px-4 py-2 rounded-full text-sm font-semibold">
+                  Choose a plan
+                </Link>
+                <Link to="/subscribe" className="inline-block bg-gold text-ink px-4 py-2 rounded-full text-sm font-semibold">
+                  Subscribe now
+                </Link>
+              </div>
             </>
           )}
         </div>
