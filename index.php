@@ -259,7 +259,60 @@ function send_trip_ticket_email(string $orderRef): void {
     } catch (Throwable $e) {}
 }
 
+function generate_ticket_png(array $info): string {
+    $w = 820; $h = 380;
+    $img = imagecreatetruecolor($w, $h);
+    $bg = imagecolorallocate($img, 255, 255, 255);
+    $accent = imagecolorallocate($img, 40, 87, 67);
+    $muted = imagecolorallocate($img, 102, 115, 108);
+    $black = imagecolorallocate($img, 20, 20, 20);
+    imagefilledrectangle($img, 0, 0, $w, $h, $bg);
+
+    // Left panel
+    imagefilledrectangle($img, 20, 20, $w-220, $h-20, imagecolorallocate($img, 245, 248, 246));
+    // Title
+    imagestring($img, 5, 40, 30, 'Royal Family TZ - Trip Ticket', $accent);
+    imagestring($img, 4, 40, 72, $info['trip_title'] ?? 'Trip', $black);
+    imagestring($img, 3, 40, 110, 'Passenger: ' . ($info['name'] ?? 'Guest'), $black);
+    imagestring($img, 3, 40, 138, 'Ticket: ' . ($info['ticket_id'] ?? ''), $black);
+    imagestring($img, 3, 40, 166, 'Package: ' . ($info['package'] ?? ''), $muted);
+    imagestring($img, 3, 40, 190, 'Destination: ' . ($info['destination'] ?? ''), $muted);
+    imagestring($img, 3, 40, 214, 'Date: ' . ($info['date'] ?? ''), $muted);
+    imagestring($img, 2, 40, $h-60, 'Order Ref: ' . ($info['order'] ?? ''), $muted);
+
+    // QR (attempt to fetch from Google Charts)
+    $qrData = 'TICKET|' . ($info['ticket_id'] ?? '') . '|' . ($info['order'] ?? '');
+    $qrUrl = 'https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=' . rawurlencode($qrData);
+    $qrRaw = @file_get_contents($qrUrl);
+    if ($qrRaw !== false) {
+        $qrImg = @imagecreatefromstring($qrRaw);
+        if ($qrImg) imagecopyresampled($img, $qrImg, $w-190, 80, 0, 0, 160, 160, imagesx($qrImg), imagesy($qrImg));
+        if (isset($qrImg) && is_resource($qrImg)) imagedestroy($qrImg);
+    } else {
+        // placeholder box
+        imagerectangle($img, $w-200, 80, $w-40, 240, $muted);
+        imagestring($img, 3, $w-180, 150, 'QR Unavailable', $muted);
+    }
+
+    ob_start(); imagepng($img); $data = ob_get_clean(); imagedestroy($img);
+    return $data;
+}
+
 function generate_ticket_pdf(array $info): string {
+    // If Imagick is available, render PNG then convert to PDF for higher fidelity
+    if (class_exists('Imagick')) {
+        try {
+            $png = generate_ticket_png($info);
+            $im = new Imagick();
+            $im->readImageBlob($png);
+            $im->setImageFormat('pdf');
+            $pdf = $im->getImageBlob();
+            $im->clear(); $im->destroy();
+            return $pdf;
+        } catch (Throwable $e) {
+            // fallback to text PDF
+        }
+    }
     // Minimal single-page PDF generator with text layout (no images).
     $lines = [];
     $lines[] = 'ROYAL FAMILY TZ - TRIP TICKET';
