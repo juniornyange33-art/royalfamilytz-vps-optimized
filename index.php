@@ -112,10 +112,62 @@ if ($path === '/auth/google/callback') {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     if ($action === 'event_create' && $user && $user['role'] === 'admin') {
-        try { ensure_community_tables(); $title = trim($_POST['title'] ?? ''); $description = trim($_POST['description'] ?? ''); $date = trim($_POST['event_date'] ?? '') ?: null; $location = trim($_POST['location'] ?? '') ?: null; if ($title === '' || $description === '') throw new RuntimeException('Event title and description are required.'); db()->prepare('INSERT INTO events (title, description, event_date, location, published) VALUES (?, ?, ?, ?, 1)')->execute([$title, $description, $date ? str_replace('T', ' ', $date) . ':00' : null, $location]); $_SESSION['flash'] = 'Event published for members.'; } catch (Throwable $e) { $_SESSION['flash'] = 'Event could not be published: ' . $e->getMessage(); } header('Location: /admin'); exit;
+        try {
+            ensure_community_tables();
+            $title = trim($_POST['title'] ?? '');
+            $description = trim($_POST['description'] ?? '');
+            $date = trim($_POST['event_date'] ?? '') ?: null;
+            $location = trim($_POST['location'] ?? '') ?: null;
+            if ($title === '' || $description === '') throw new RuntimeException('Event title and description are required.');
+            db()->prepare('INSERT INTO events (title, description, event_date, location, published) VALUES (?, ?, ?, ?, 1)')->execute([$title, $description, $date ? str_replace('T', ' ', $date) . ':00' : null, $location]);
+
+            // Also create a notification for members and deliver to their profiles and email
+            $noteTitle = 'New event: ' . $title;
+            $noteMessage = trim($description ? $description : ($location ? 'Event at ' . $location : 'New event published'));
+            db()->prepare('INSERT INTO notifications (title, message, audience) VALUES (?, ?, ?)')->execute([$noteTitle, $noteMessage, 'members']);
+            $noteId = (int)db()->lastInsertId();
+
+            // Insert user_notifications for all members and send emails if configured
+            $users = db()->query("SELECT id, email FROM users WHERE role = 'member' ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($users as $u) {
+                db()->prepare('INSERT INTO user_notifications (notification_id, user_id) VALUES (?, ?)')->execute([$noteId, $u['id']]);
+                if (mail_configured() && !empty($u['email'])) {
+                    try { send_email((string)$u['email'], $noteTitle, $noteMessage); db()->prepare('UPDATE user_notifications SET email_sent = 1 WHERE notification_id = ? AND user_id = ?')->execute([$noteId, $u['id']]); } catch (Throwable $mailErr) {}
+                }
+            }
+
+            $_SESSION['flash'] = 'Event published for members.';
+        } catch (Throwable $e) { $_SESSION['flash'] = 'Event could not be published: ' . $e->getMessage(); }
+        header('Location: /admin'); exit;
     }
+    
     if ($action === 'notification_create' && $user && $user['role'] === 'admin') {
-        try { ensure_community_tables(); $title = trim($_POST['title'] ?? ''); $message = trim($_POST['message'] ?? ''); $audience = in_array($_POST['audience'] ?? 'all', ['all','members','admins'], true) ? $_POST['audience'] : 'all'; if ($title === '' || $message === '') throw new RuntimeException('Notification title and message are required.'); db()->prepare('INSERT INTO notifications (title, message, audience) VALUES (?, ?, ?)')->execute([$title, $message, $audience]); $roleFilter = $audience === 'all' ? '' : ' WHERE role = ' . db()->quote($audience === 'admins' ? 'admin' : 'member'); $recipients = db()->query('SELECT email FROM users' . $roleFilter . ' ORDER BY id ASC')->fetchAll(PDO::FETCH_COLUMN); $sent = 0; $emailWarning = ''; if (mail_configured()) { foreach ($recipients as $recipient) { try { if (send_email((string)$recipient, $title, $message)) $sent++; } catch (Throwable $mailError) { $emailWarning = $mailError->getMessage(); } } } else $emailWarning = 'SMTP is not configured'; $_SESSION['flash'] = 'Notification saved for dashboards. ' . ($sent ? $sent . ' email(s) sent.' : 'No email sent: ' . $emailWarning . '. Configure SMTP in local-config.php.'); } catch (Throwable $e) { $_SESSION['flash'] = 'Notification could not be sent: ' . $e->getMessage(); } header('Location: /admin'); exit;
+        try {
+            ensure_community_tables();
+            $title = trim($_POST['title'] ?? '');
+            $message = trim($_POST['message'] ?? '');
+            $audience = in_array($_POST['audience'] ?? 'all', ['all','members','admins'], true) ? $_POST['audience'] : 'all';
+            if ($title === '' || $message === '') throw new RuntimeException('Notification title and message are required.');
+
+            db()->prepare('INSERT INTO notifications (title, message, audience) VALUES (?, ?, ?)')->execute([$title, $message, $audience]);
+            $noteId = (int)db()->lastInsertId();
+
+            // Determine recipients
+            $roleFilter = $audience === 'all' ? '' : ' WHERE role = ' . db()->quote($audience === 'admins' ? 'admin' : 'member');
+            $recipients = db()->query('SELECT id, email FROM users' . $roleFilter . ' ORDER BY id ASC')->fetchAll(PDO::FETCH_ASSOC);
+
+            $sent = 0; $emailWarning = '';
+            foreach ($recipients as $r) {
+                // insert per-user notification
+                db()->prepare('INSERT INTO user_notifications (notification_id, user_id) VALUES (?, ?)')->execute([$noteId, $r['id']]);
+                if (mail_configured() && !empty($r['email'])) {
+                    try { if (send_email((string)$r['email'], $title, $message)) $sent++; db()->prepare('UPDATE user_notifications SET email_sent = 1 WHERE notification_id = ? AND user_id = ?')->execute([$noteId, $r['id']]); } catch (Throwable $mailError) { $emailWarning = $mailError->getMessage(); }
+                }
+            }
+
+            $_SESSION['flash'] = 'Notification saved for dashboards. ' . ($sent ? $sent . ' email(s) sent.' : 'No email sent: ' . ($emailWarning ?: 'SMTP not configured') . '.');
+        } catch (Throwable $e) { $_SESSION['flash'] = 'Notification could not be sent: ' . $e->getMessage(); }
+        header('Location: /admin'); exit;
     }
     if (($action === 'notification_update' || $action === 'notification_delete') && $user && $user['role'] === 'admin') {
         try { ensure_community_tables(); $id = (int)($_POST['notification_id'] ?? 0); if (!$id) throw new RuntimeException('Notification ID is required.'); if ($action === 'notification_delete') { db()->prepare('DELETE FROM notifications WHERE id = ?')->execute([$id]); $_SESSION['flash'] = 'Notification deleted.'; } else { $title = trim($_POST['title'] ?? ''); $message = trim($_POST['message'] ?? ''); $audience = in_array($_POST['audience'] ?? 'all', ['all','members','admins'], true) ? $_POST['audience'] : 'all'; if ($title === '' || $message === '') throw new RuntimeException('Notification title and message are required.'); db()->prepare('UPDATE notifications SET title = ?, message = ?, audience = ? WHERE id = ?')->execute([$title, $message, $audience, $id]); $_SESSION['flash'] = 'Notification updated.'; } } catch (Throwable $e) { $_SESSION['flash'] = 'Notification could not be changed: ' . $e->getMessage(); } header('Location: /admin'); exit;
@@ -292,7 +344,12 @@ function send_trip_ticket_email(string $orderRef): void {
 function public_app_url(string $path = ''): string { $local = is_file(__DIR__.'/local-config.php') ? (require __DIR__.'/local-config.php') : []; $base = rtrim((string)($local['APP_URL'] ?? getenv('APP_URL') ?: ''), '/'); if ($base === '') { $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http'; $base = $scheme . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . app_base_path(); } return $base . '/' . ltrim($path, '/'); }
 function send_verification_email(array $account, string $token): bool { $link = public_app_url('/verify-email?token=' . rawurlencode($token)); $body = "Hello {$account['name']},\n\nPlease verify your Royal Family TZ email address by opening this link:\n{$link}\n\nThis link expires in 24 hours. If you did not create this account, you can ignore this email.\n\nRoyal Family TZ"; return send_email((string)$account['email'], 'Verify your Royal Family TZ email', $body); }
 function ensure_contact_columns(): void { static $done = false; if ($done) return; try { db()->exec("ALTER TABLE contact_messages ADD COLUMN status ENUM('new','replied') NOT NULL DEFAULT 'new'"); } catch (Throwable $e) {} try { db()->exec('ALTER TABLE contact_messages ADD COLUMN replied_at DATETIME NULL'); } catch (Throwable $e) {} $done = true; }
-function ensure_community_tables(): void { static $done = false; if ($done) return; db()->exec("CREATE TABLE IF NOT EXISTS events (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(180) NOT NULL, description TEXT NOT NULL, event_date DATETIME NULL, location VARCHAR(180) NULL, published TINYINT(1) NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB"); db()->exec("CREATE TABLE IF NOT EXISTS notifications (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(180) NOT NULL, message TEXT NOT NULL, audience ENUM('all','members','admins') NOT NULL DEFAULT 'all', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB"); $done = true; }
+function ensure_community_tables(): void { static $done = false; if ($done) return;
+    db()->exec("CREATE TABLE IF NOT EXISTS events (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(180) NOT NULL, description TEXT NOT NULL, event_date DATETIME NULL, location VARCHAR(180) NULL, published TINYINT(1) NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
+    db()->exec("CREATE TABLE IF NOT EXISTS notifications (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(180) NOT NULL, message TEXT NOT NULL, audience ENUM('all','members','admins') NOT NULL DEFAULT 'all', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
+    db()->exec("CREATE TABLE IF NOT EXISTS user_notifications (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, notification_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL, is_read TINYINT(1) NOT NULL DEFAULT 0, email_sent TINYINT(1) NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT fk_user_notifications_notification FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE, CONSTRAINT fk_user_notifications_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB");
+    $done = true; }
+
 function ensure_trip_tables(): void { static $done = false; if ($done) return; try { db()->exec("ALTER TABLE transactions MODIFY type ENUM('donation','subscription','trip') NOT NULL"); } catch (Throwable $e) {} db()->exec("CREATE TABLE IF NOT EXISTS trips (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(180) NOT NULL, slug VARCHAR(180) NOT NULL UNIQUE, description TEXT NOT NULL, destination VARCHAR(180) NOT NULL, trip_date DATE NULL, meeting_point VARCHAR(180) NULL, poster_image VARCHAR(255) NULL, published TINYINT(1) NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB"); try { db()->exec('ALTER TABLE trips ADD COLUMN poster_image VARCHAR(255) NULL'); } catch (Throwable $e) {} db()->exec("CREATE TABLE IF NOT EXISTS trip_packages (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, trip_id INT UNSIGNED NOT NULL, name VARCHAR(120) NOT NULL, description TEXT NOT NULL, price DECIMAL(12,2) NOT NULL, capacity INT UNSIGNED NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT fk_trip_packages_trip FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE) ENGINE=InnoDB"); db()->exec("CREATE TABLE IF NOT EXISTS trip_bookings (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, trip_id INT UNSIGNED NOT NULL, package_id INT UNSIGNED NOT NULL, transaction_id INT UNSIGNED NULL, guests INT UNSIGNED NOT NULL DEFAULT 1, status ENUM('pending','paid','cancelled') NOT NULL DEFAULT 'pending', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT fk_trip_bookings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, CONSTRAINT fk_trip_bookings_trip FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE, CONSTRAINT fk_trip_bookings_package FOREIGN KEY (package_id) REFERENCES trip_packages(id) ON DELETE CASCADE, CONSTRAINT fk_trip_bookings_transaction FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE SET NULL) ENGINE=InnoDB"); $done = true; }
 function logo_url(): string { return app_base_path() . '/assets/royal-family-logo.jpg'; }
 function profile_src(?array $user): string { if (!$user) return ''; $base = app_base_path(); if (!empty($user['profile_image'])) return $base.'/uploads/profiles/'.basename($user['profile_image']); return (string)($user['avatar_url'] ?? ''); }
@@ -325,7 +382,7 @@ function css(): string { return <<<'CSS'
 CSS; }
 
 $events = []; $notifications = [];
-if ($user) { try { ensure_community_tables(); $events = db()->query("SELECT title, description, event_date, location FROM events WHERE published = 1 ORDER BY event_date IS NULL, event_date ASC, created_at DESC LIMIT 6")->fetchAll(); $audienceSql = $user['role'] === 'admin' ? "('all','members','admins')" : "('all','members')"; $notifications = db()->query("SELECT title, message, created_at FROM notifications WHERE audience IN {$audienceSql} ORDER BY created_at DESC LIMIT 8")->fetchAll(); } catch (Throwable $e) {} }
+    if ($user) { try { ensure_community_tables(); $events = db()->query("SELECT title, description, event_date, location FROM events WHERE published = 1 ORDER BY event_date IS NULL, event_date ASC, created_at DESC LIMIT 6")->fetchAll(); $notifications = db()->prepare("SELECT n.title, n.message, un.is_read, n.created_at FROM user_notifications un JOIN notifications n ON n.id = un.notification_id WHERE un.user_id = ? ORDER BY n.created_at DESC LIMIT 8"); $notifications->execute([$user['id']]); $notifications = $notifications->fetchAll(); } catch (Throwable $e) {} }
 $content='';
 switch ($path) {
 case '/': $content='<section class="hero"><div><p class="eyebrow">Community • purpose • possibility</p><h1>A stronger Tanzania starts with us.</h1><p>Royal Family TZ brings people together to support community action and help young talent grow.</p><a class="btn" href="/members">Become a member</a><a class="btn gold" href="/donate">Support the mission</a></div>'.gallery($homeImages,'Royal Family TZ community','hero-gallery').'</section><section class="section"><div class="center"><p class="eyebrow">What we believe</p><h2>Community with a clear purpose.</h2></div><div class="grid">'; foreach($features as $f) $content.='<article class="card"><div class="icon">✦</div><h3>'.e($f['title']).'</h3><p>'.e($f['body']).'</p></article>'; $content.='</div></section>'; break;
