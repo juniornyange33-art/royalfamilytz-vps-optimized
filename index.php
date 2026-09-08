@@ -1,8 +1,9 @@
 <?php
+declare(strict_types=1);
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
-declare(strict_types=1);
+
 $secureSession = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
 if (PHP_VERSION_ID >= 70300) {
     session_set_cookie_params([
