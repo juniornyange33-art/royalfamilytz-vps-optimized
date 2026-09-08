@@ -6,3 +6,19 @@
 @media(max-width:900px){.membership-grid{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:600px){.membership-grid{grid-template-columns:1fr}.member-card{min-height:auto;padding:18px}}
 .payment-grid{gap:10px}
+
+/* Form input normalization */
+.form label{display:block;margin-bottom:12px}
+.form label input,.form label textarea,.form select{width:100%;padding:10px;border:1px solid #e6dec9;border-radius:8px;font-size:0.98rem}
+.form label textarea{min-height:120px;resize:vertical}
+
+/* Member badge colors */
+.badge-spring{background:linear-gradient(135deg,#dff6e9,#c9f0d6);color:#164a2f}
+.badge-silver{background:linear-gradient(135deg,#f0f2f4,#e7eaec);color:#23313a}
+.badge-gold{background:linear-gradient(135deg,#fff3dc,#f7e6c7);color:#6b4a14}
+
+/* Buttons inside cards */
+.member-card .btn{width:140px}
+
+/* Make donation and member cards more compact on small screens */
+@media(max-width:700px){.member-card .btn{width:100%}}
