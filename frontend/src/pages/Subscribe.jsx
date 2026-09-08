@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 const TIERS = {
   royalfamilymember: { name: 'Royal Family', monthly: 2000, yearly: 12000 },
@@ -20,10 +20,13 @@ export default function Subscribe() {
   const [choosePlan, setChoosePlan] = useState(false)
 
   const location = useLocation()
+  const navigate = useNavigate()
   useEffect(() => {
     const qp = new URLSearchParams(location.search)
     const qTier = qp.get('tier')
     const qPeriod = qp.get('period')
+    // If no tier was passed explicitly, send the user to the members page
+    if (!qTier) { navigate('/members'); return }
     if (qTier && TIERS[qTier]) setTier(qTier)
     if (qPeriod && (qPeriod === 'monthly' || qPeriod === 'yearly')) setPeriod(qPeriod)
   }, [location.search])

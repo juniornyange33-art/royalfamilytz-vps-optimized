@@ -508,6 +508,11 @@ case '/subscribe':
     $content = '<div class="page"><p class="eyebrow">Membership</p>';
     $qTier = trim((string)($_GET['tier'] ?? ''));
     $qPeriod = in_array($_GET['period'] ?? 'monthly', ['monthly','yearly'], true) ? $_GET['period'] : 'monthly';
+    // If no tier is provided, redirect users to the members page (remove bare /subscribe)
+    if ($qTier === '') {
+        header('Location: /members', true, 302);
+        exit;
+    }
     if ($qTier !== '') {
         // Show focused subscribe form for the selected tier
         $match = null; foreach ($tiers as $t) if (strcasecmp($t['name'], $qTier) === 0) { $match = $t; break; }
