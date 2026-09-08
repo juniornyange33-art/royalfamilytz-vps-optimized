@@ -26,7 +26,7 @@ export default function Members() {
 
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
         {TIERS.map((t) => (
-          <div key={t.key} className="bg-white rounded-2xl shadow-sm border p-6 flex flex-col justify-between">
+          <div key={t.key} className="bg-white rounded-2xl shadow-sm border p-6 flex flex-col justify-between transform transition hover:-translate-y-1 hover:shadow-lg">
             <div>
               <div className="flex items-center justify-between">
                 <h3 className="font-display text-2xl text-royal">{t.name}</h3>
