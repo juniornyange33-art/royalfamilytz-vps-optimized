@@ -1,3 +1,4 @@
+<?php
 declare(strict_types=1);
 $secureSession = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
 if (PHP_VERSION_ID >= 70300) {
@@ -355,6 +356,25 @@ function app_base_path(): string {
     return ($dir === '.' || $dir === '/') ? '' : rtrim($dir, '/'); 
 }
 
+function ensure_profile_columns(): void { 
+    static $done = false; 
+    if ($done) return; 
+    $columns = []; 
+    foreach (db()->query('SHOW COLUMNS FROM users')->fetchAll() as $column){
+$columns[(string)$column['Field']] = true; 
+    }
+    if (!isset($columns['profile_image'])) {
+        db()->exec('ALTER TABLE users ADD COLUMN profile_image VARCHAR(255) NULL'); 
+    }
+    if (!isset($columns['bio'])) {
+        db()->exec('ALTER TABLE users ADD COLUMN bio TEXT NULL'); 
+    }
+    if (!isset($columns['membership_tier'])) {
+        db()->exec('ALTER TABLE users ADD COLUMN membership_tier VARCHAR(50) NULL DEFAULT "Spring Green"');
+    }
+    $done = true; 
+}
+
 function public_app_url(string $path = ''): string { 
     $local = is_file(__DIR__.'/local-config.php') ? (require __DIR__.'/local-config.php') : []; 
     $base = rtrim((string)($local['APP_URL'] ?? getenv('APP_URL') ?: ''), '/'); 
@@ -377,10 +397,10 @@ function send_trip_ticket_email(string $orderRef): void {
         $stmt->execute([$orderRef]);
         $data = $stmt->fetch();
         if (!$data || !mail_configured()) return;
-
+        
         $tier = $data['membership_tier'] ?? 'Spring Green';
         $badge = ($tier === 'Gold Patron') ? 'GOLD 🥇' : (($tier === 'Silver Supporter') ? 'SILVER 🥈' : 'SPRING GREEN 🟢');
-
+        
         $subject = "Your Trip Ticket - " . $data['trip_title'] . " [" . $badge . "]";
         $body = "Hello " . $data['name'] . ",\n\n"
               . "Thank you for your booking! Here is your official event/trip ticket:\n\n"
@@ -401,7 +421,7 @@ function send_trip_ticket_email(string $orderRef): void {
               . "Please present this digital email ticket upon departure.\n\n"
               . "Safe travels,\n"
               . "Royal Family TZ Team";
-
+              
         send_email((string)$data['email'], $subject, $body);
     } catch (Throwable $e) {}
 }
@@ -475,19 +495,23 @@ nav a:hover,nav a.active{color:var(--royal);border-bottom:2px solid var(--gold)}
 .page{max-width:1080px;margin:40px auto;padding:0 28px}
 .center{text-align:center}
 .eyebrow{color:var(--gold);font-weight:700;letter-spacing:.13em;text-transform:uppercase;font-size:.76rem}
+
 .donate-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;margin-top:24px}
 .donate-card{background:#fff;border:1px solid #e8dfcb;border-radius:14px;padding:20px;box-shadow:0 4px 12px rgba(0,0,0,0.04);display:flex;flex-direction:column;justify-content:space-between}
 .donate-card h3{font-size:1.25rem;margin-bottom:8px}
 .donate-card p{font-size:.9rem;color:var(--muted);margin-bottom:14px}
+
 .form-card{max-width:560px;margin:30px auto;background:#fff;padding:28px;border-radius:16px;border:1px solid #e8dfcb}
 .form{display:grid;gap:16px}
 .form label{font-weight:700;font-size:.9rem;display:flex;flex-direction:column;gap:6px}
 .form input[type="text"],.form input[type="email"],.form input[type="number"],.form input[type="password"],.form select,.form textarea{width:100%;padding:12px 14px;border:1px solid #c9c0b0;border-radius:8px;background:#fff;font-family:inherit;font-size:.95rem;box-sizing:border-box}
 .form textarea{resize:vertical;min-height:120px}
+
 .payment-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:10px 0}
 .payment-option input[type="radio"]{display:none}
 .payment-option label{display:flex;align-items:center;justify-content:center;padding:12px;border:2px solid #e8dfcb;border-radius:8px;cursor:pointer;background:#fff;font-weight:700;font-size:.85rem}
 .payment-option input[type="radio"]:checked + label{border-color:var(--gold);background:#fffef0}
+
 .membership-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:30px}
 .member-card{background:#fff;border:2px solid #e8dfcb;border-radius:18px;padding:28px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,0.05);display:flex;flex-direction:column;justify-content:space-between}
 .member-card.spring-card{border-color:var(--spring)}
@@ -499,6 +523,7 @@ nav a:hover,nav a.active{color:var(--royal);border-bottom:2px solid var(--gold)}
 .badge-gold{background:#c9a54c22;color:#8a6d1c;border:1px solid var(--gold)}
 .price-option{background:#fdfbf7;border:1px solid #ebd8b0;border-radius:10px;padding:12px;margin:8px 0;text-align:left;display:flex;justify-content:space-between;align-items:center}
 .price-option strong{font-size:1.1rem;color:var(--royal)}
+
 @media(max-width:850px){.membership-grid{grid-template-columns:1fr}.payment-grid{grid-template-columns:1fr}}
 CSS; 
 }
@@ -564,8 +589,7 @@ switch ($path) {
             </form>
         </div></div>'; 
         break;
-
-    case '/members': 
+case '/members': 
         $content = '<div class="page"><div class="center"><p class="eyebrow">Join The Family</p><h1>Become A Member</h1><p>Choose a tier that matches your commitment level and unlock exclusive digital membership IDs.</p></div>
         <div class="membership-grid">
             <article class="member-card spring-card">
@@ -653,4 +677,4 @@ switch ($path) {
         break;
 }
 
-layout('Royal Family TZ', $content, $path, $user, $flash);
+layout('Royal Family TZ', $content, $path,
