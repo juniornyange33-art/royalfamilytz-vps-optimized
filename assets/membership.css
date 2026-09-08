@@ -1,0 +1,8 @@
+.membership-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin:20px 0}
+.member-card{background:#fff;border-radius:14px;padding:22px;min-height:320px;display:flex;align-items:center;box-shadow:0 6px 20px rgba(0,0,0,0.05)}
+.member-card > div{width:100%}
+.price-option{display:flex;justify-content:space-between;align-items:center;margin-top:12px;gap:8px}
+.tier-badge{display:inline-block;padding:6px 10px;border-radius:999px;font-weight:700;margin-bottom:10px}
+@media(max-width:900px){.membership-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){.membership-grid{grid-template-columns:1fr}.member-card{min-height:auto;padding:18px}}
+.payment-grid{gap:10px}
