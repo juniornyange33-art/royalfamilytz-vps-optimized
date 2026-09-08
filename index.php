@@ -10,6 +10,18 @@ require_once __DIR__ . '/mailer.php';
 require_once __DIR__ . '/lib/tickets.php';
 
 const APP_NAME = 'Royal Family TZ';
+// Canonical membership plans. Each has a stable plan_id so /members and /subscribe
+// always agree on the exact tier, period, and amount — this is what gets sent to
+// ClickPesa, so the USSD/mobile-money prompt on the member's phone always matches
+// the plan they actually chose.
+$membershipPlans = [
+    'royal-monthly'  => ['id' => 'royal-monthly',  'tier' => 'Royal Family Member', 'period' => 'monthly', 'amount' => 2000,  'badge' => 'Spring Green ID 🟢'],
+    'royal-yearly'   => ['id' => 'royal-yearly',   'tier' => 'Royal Family Member', 'period' => 'yearly',  'amount' => 12000, 'badge' => 'Spring Green ID 🟢'],
+    'silver-monthly' => ['id' => 'silver-monthly', 'tier' => 'Silver Supporter',     'period' => 'monthly', 'amount' => 5000,  'badge' => 'Silver Membership ID 🥈'],
+    'silver-yearly'  => ['id' => 'silver-yearly',  'tier' => 'Silver Supporter',     'period' => 'yearly',  'amount' => 50000, 'badge' => 'Silver Membership ID 🥈'],
+    'gold-monthly'   => ['id' => 'gold-monthly',   'tier' => 'Gold Patron',          'period' => 'monthly', 'amount' => 10000, 'badge' => 'Gold Patron ID 🥇'],
+    'gold-yearly'    => ['id' => 'gold-yearly',    'tier' => 'Gold Patron',          'period' => 'yearly',  'amount' => 50000, 'badge' => 'Gold Patron ID 🥇'],
+];
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $path = rtrim($path, '/') ?: '/';
 $basePath = str_replace('\\', '/', dirname((string)($_SERVER['SCRIPT_NAME'] ?? '/index.php')));
@@ -279,8 +291,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'donate' || $action === 'subscribe') {
         try {
             if (!$user && $action === 'subscribe') throw new RuntimeException('Please log in before subscribing.');
-            $amount = $action === 'subscribe' ? (float)($_POST['amount'] ?? 0) : (float)($_POST['amount'] ?? 0);
-            $method = trim($_POST['method'] ?? 'mobile'); $phone = trim($_POST['phone'] ?? ''); $tier = $_POST['tier'] ?? null; $type = $action === 'donate' ? 'donation' : 'subscription';
+            $tier = $_POST['tier'] ?? null;
+            if ($action === 'subscribe') {
+                // Never trust the posted amount for a subscription — look the plan back up by its
+                // plan_id so ClickPesa is always asked for the exact amount of the chosen plan,
+                // which is what shows up in the USSD/mobile-money prompt on the member's phone.
+                $chosenPlan = $membershipPlans[trim((string)($_POST['plan_id'] ?? ''))] ?? null;
+                if (!$chosenPlan) throw new RuntimeException('Please choose a membership plan from the Members page.');
+                $amount = (float)$chosenPlan['amount']; $tier = $chosenPlan['tier'];
+            } else {
+                $amount = (float)($_POST['amount'] ?? 0);
+            }
+            $method = trim($_POST['method'] ?? 'mobile'); $phone = trim($_POST['phone'] ?? ''); $type = $action === 'donate' ? 'donation' : 'subscription';
             $reference = 'RF' . date('ymdHis') . strtoupper(bin2hex(random_bytes(2))); // 18 chars, within ClickPesa's 20-character limit
             db()->prepare('INSERT INTO transactions (user_id, type, tier, amount, currency, method, status, order_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([$user['id'] ?? null, $type, $tier, $amount, 'TZS', $method, 'pending', $reference]);
             $result = cp_start_payment($amount, $method, $phone, $reference, $user['name'] ?? trim($_POST['name'] ?? 'Donor'), $user['email'] ?? trim($_POST['email'] ?? ''));
@@ -301,7 +323,6 @@ if (!$user && !in_array($path, $public, true)) { header('Location: /login'); exi
 if ($path === '/admin' && (!$user || $user['role'] !== 'admin')) { header('Location: /login'); exit; }
 
 $features = [['title'=>'Community','body'=>'Building a generous, connected community where every member can contribute and belong.'],['title'=>'Youth talent','body'=>'Creating pathways for young Tanzanians to develop their skills, confidence, and careers.'],['title'=>'Lasting impact','body'=>'Turning membership and donations into practical charity events and opportunity.']];
-$tiers = [['name'=>'Supporter','price'=>'TZS 10,000','text'=>'Monthly community support'],['name'=>'Changemaker','price'=>'TZS 25,000','text'=>'Priority event invitations'],['name'=>'Patron','price'=>'TZS 50,000','text'=>'Help fund youth programs']];
 $homeImages = ['community-01.jpg','community-04.jpg','community-06.jpg','community-08.jpg'];
 $aboutImages = ['community-02.jpg','community-03.jpg','community-05.jpg','community-07.jpg'];
 function e(string $v): string { return htmlspecialchars($v, ENT_QUOTES, 'UTF-8'); }
@@ -436,11 +457,11 @@ case '/members':
                     <p>Basic tier access for active community participants.</p>
                     <div class="price-option">
                         <div><strong>2,000 TZS</strong><br><small>Monthly Subscription</small></div>
-                        ' . ($user ? '<a class="btn spring" href="/subscribe?tier=Royal%20Family%20Member&period=monthly">Join</a>' : '<a class="btn spring" href="/login">Join</a>') . '
+                        ' . ($user ? '<a class="btn spring" href="/subscribe?plan_id=royal-monthly">Join</a>' : '<a class="btn spring" href="/login">Join</a>') . '
                     </div>
                     <div class="price-option">
                         <div><strong>12,000 TZS</strong><br><small>Yearly Subscription</small></div>
-                        ' . ($user ? '<a class="btn spring" href="/subscribe?tier=Royal%20Family%20Member&period=yearly">Join</a>' : '<a class="btn spring" href="/login">Join</a>') . '
+                        ' . ($user ? '<a class="btn spring" href="/subscribe?plan_id=royal-yearly">Join</a>' : '<a class="btn spring" href="/login">Join</a>') . '
                     </div>
                 </div>
             </article>
@@ -452,11 +473,11 @@ case '/members':
                     <p>Dedicated supporters making a continuous monthly or annual impact.</p>
                     <div class="price-option">
                         <div><strong>5,000 TZS</strong><br><small>Monthly Subscription</small></div>
-                        ' . ($user ? '<a class="btn silver" href="/subscribe?tier=Silver%20Supporter&period=monthly">Join</a>' : '<a class="btn silver" href="/login">Join</a>') . '
+                        ' . ($user ? '<a class="btn silver" href="/subscribe?plan_id=silver-monthly">Join</a>' : '<a class="btn silver" href="/login">Join</a>') . '
                     </div>
                     <div class="price-option">
                         <div><strong>50,000 TZS</strong><br><small>Yearly Subscription</small></div>
-                        ' . ($user ? '<a class="btn silver" href="/subscribe?tier=Silver%20Supporter&period=yearly">Join</a>' : '<a class="btn silver" href="/login">Join</a>') . '
+                        ' . ($user ? '<a class="btn silver" href="/subscribe?plan_id=silver-yearly">Join</a>' : '<a class="btn silver" href="/login">Join</a>') . '
                     </div>
                 </div>
             </article>
@@ -468,11 +489,11 @@ case '/members':
                     <p>Highest status supporting major projects, trips, and development programs.</p>
                     <div class="price-option">
                         <div><strong>10,000 TZS</strong><br><small>Monthly Subscription</small></div>
-                        ' . ($user ? '<a class="btn gold" href="/subscribe?tier=Gold%20Patron&period=monthly">Join</a>' : '<a class="btn gold" href="/login">Join</a>') . '
+                        ' . ($user ? '<a class="btn gold" href="/subscribe?plan_id=gold-monthly">Join</a>' : '<a class="btn gold" href="/login">Join</a>') . '
                     </div>
                     <div class="price-option">
                         <div><strong>50,000 TZS</strong><br><small>Yearly Subscription</small></div>
-                        ' . ($user ? '<a class="btn gold" href="/subscribe?tier=Gold%20Patron&period=yearly">Join</a>' : '<a class="btn gold" href="/login">Join</a>') . '
+                        ' . ($user ? '<a class="btn gold" href="/subscribe?plan_id=gold-yearly">Join</a>' : '<a class="btn gold" href="/login">Join</a>') . '
                     </div>
                 </div>
             </article>
@@ -502,36 +523,25 @@ case '/blog': $content='<div class="page"><p class="eyebrow">Stories and updates
 case '/contact': $content='<div class="page"><p class="eyebrow">We would love to hear from you</p><h1>Contact us</h1><div class="form-card"><form class="form" method="post"><input type="hidden" name="action" value="contact"><label>Name<input name="name" required></label><label>Email<input type="email" name="email" required></label><label>Message<textarea name="message" rows="5" required></textarea></label><button class="btn" type="submit">Send message</button></form></div></div>'; break;
 case '/login': $content='<div class="page"><div class="form-card"><p class="eyebrow">Welcome back</p><h2>Log in</h2><a class="google-btn" href="'.e(app_base_path()).'/auth/google/start"><span class="google-icon" aria-hidden="true">G</span> Continue with Google</a><div class="or">or use email</div><form class="form" method="post"><input type="hidden" name="action" value="login"><label>Email<input type="email" name="email" required></label><label>Password<input type="password" name="password" required></label><button class="btn" type="submit">Log in</button></form><p>New here? <a href="/signup"><u>Sign up</u></a></p></div></div>'; break;
 case '/signup': $content='<div class="page"><div class="form-card"><p class="eyebrow">Start your journey</p><h2>Create your account</h2><a class="google-btn" href="'.e(app_base_path()).'/auth/google/start"><span class="google-icon" aria-hidden="true">G</span> Sign up with Google</a><div class="or">or create an account with email</div><form class="form" method="post" enctype="application/x-www-form-urlencoded"><input type="hidden" name="action" value="signup"><label>Full name<input name="name" required></label><label>Email<input type="email" name="email" required></label><label>Password<input type="password" name="password" minlength="6" required></label><button class="btn" type="submit">Sign up</button></form></div></div>'; break;
-case '/dashboard': $dashAvatar = profile_src($user); $dashPhoto = $dashAvatar ? '<img class="dashboard-avatar" src="'.e($dashAvatar).'" alt="Profile photo of '.e($user['name']).'">' : '<div class="dashboard-avatar dashboard-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>'; $eventCards=''; foreach($events as $event) $eventCards.='<article class="card"><p class="eyebrow">Upcoming event</p><h3>'.e($event['title']).'</h3><p>'.e($event['description']).'</p><p class="muted">'.e($event['location'] ?? '').($event['event_date']?' · '.e(date('M j, Y g:i A', strtotime($event['event_date']))):'').'</p></article>'; $noticeCards=''; foreach($notifications as $notice) $noticeCards.='<article class="card"><p class="eyebrow">Notification</p><h3>'.e($notice['title']).'</h3><p>'.e($notice['message']).'</p><p class="muted">'.e(date('M j, Y', strtotime($notice['created_at']))).'</p></article>'; $content='<div class="page"><div class="dashboard-welcome">'.$dashPhoto.'<div><p class="eyebrow">Member space</p><h1>Welcome, '.e($user['name']).'</h1><p class="muted">Your profile photo appears here after you add it from your profile page.</p></div></div><div class="stats"><div class="stat"><strong>'.($user['membership']?'Active':'—').'</strong><span>Membership status</span></div><div class="stat"><strong>'.count($events).'</strong><span>Upcoming events</span></div><div class="stat"><strong>'.count($notifications).'</strong><span>Notifications</span></div></div><section class="section"><p class="eyebrow">Stay connected</p><h2>Events and updates</h2><div class="grid">'.($eventCards ?: '<article class="card"><p class="muted">No upcoming events yet.</p></article>').($noticeCards ?: '<article class="card"><p class="muted">No new notifications.</p></article>').'</div></section><div class="grid"><article class="card"><h3>Your profile</h3><p>'.e($user['email']).'</p><a class="btn" href="/profile">Edit profile</a></article><article class="card"><h3>Grow with us</h3><p>Activate your membership and join the next community experience.</p><a class="btn gold" href="/subscribe">Choose a plan</a></article></div></div>'; break;
+case '/dashboard': $dashAvatar = profile_src($user); $dashPhoto = $dashAvatar ? '<img class="dashboard-avatar" src="'.e($dashAvatar).'" alt="Profile photo of '.e($user['name']).'">' : '<div class="dashboard-avatar dashboard-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>'; $eventCards=''; foreach($events as $event) $eventCards.='<article class="card"><p class="eyebrow">Upcoming event</p><h3>'.e($event['title']).'</h3><p>'.e($event['description']).'</p><p class="muted">'.e($event['location'] ?? '').($event['event_date']?' · '.e(date('M j, Y g:i A', strtotime($event['event_date']))):'').'</p></article>'; $noticeCards=''; foreach($notifications as $notice) $noticeCards.='<article class="card"><p class="eyebrow">Notification</p><h3>'.e($notice['title']).'</h3><p>'.e($notice['message']).'</p><p class="muted">'.e(date('M j, Y', strtotime($notice['created_at']))).'</p></article>'; $content='<div class="page"><div class="dashboard-welcome">'.$dashPhoto.'<div><p class="eyebrow">Member space</p><h1>Welcome, '.e($user['name']).'</h1><p class="muted">Your profile photo appears here after you add it from your profile page.</p></div></div><div class="stats"><div class="stat"><strong>'.($user['membership']?'Active':'—').'</strong><span>Membership status</span></div><div class="stat"><strong>'.count($events).'</strong><span>Upcoming events</span></div><div class="stat"><strong>'.count($notifications).'</strong><span>Notifications</span></div></div><section class="section"><p class="eyebrow">Stay connected</p><h2>Events and updates</h2><div class="grid">'.($eventCards ?: '<article class="card"><p class="muted">No upcoming events yet.</p></article>').($noticeCards ?: '<article class="card"><p class="muted">No new notifications.</p></article>').'</div></section><div class="grid"><article class="card"><h3>Your profile</h3><p>'.e($user['email']).'</p><a class="btn" href="/profile">Edit profile</a></article><article class="card"><h3>Grow with us</h3><p>Activate your membership and join the next community experience.</p><a class="btn gold" href="/members">Choose a plan</a></article></div></div>'; break;
 case '/profile': $avatar = profile_src($user); $content='<div class="page"><div class="form-card"><p class="eyebrow">Member details</p><h2>Your profile</h2><div class="avatar-picker">'.($avatar?'<img class="profile-avatar" src="'.e($avatar).'" alt="Profile photo">':'<div class="profile-placeholder">'.e(strtoupper(substr($user['name'],0,1))).'</div>').'<label class="camera-button" for="profile_image" title="Add or change profile photo" aria-label="Add or change profile photo">&#128247;</label></div><p class="photo-hint">Tap the camera icon to add or change your photo.</p><form class="form" method="post" enctype="multipart/form-data"><input type="hidden" name="action" value="profile_update"><label>Display name<input name="name" value="'.e($user['name']).'" required></label><label>Email<input value="'.e($user['email']).'" disabled></label><label>Bio<textarea name="bio" rows="4" placeholder="Tell the community about yourself"></textarea></label><input id="profile_image" class="visually-hidden" type="file" name="profile_image" accept="image/jpeg,image/png,image/webp" onchange="this.form.submit()"><button class="btn" type="submit">Save profile</button></form></div></div>'; break;
 case '/subscribe':
     $content = '<div class="page"><p class="eyebrow">Membership</p>';
-    $qTier = trim((string)($_GET['tier'] ?? ''));
-    $qPeriod = in_array($_GET['period'] ?? 'monthly', ['monthly','yearly'], true) ? $_GET['period'] : 'monthly';
-    // If no tier is provided, redirect users to the members page (remove bare /subscribe)
-    if ($qTier === '') {
+    $planId = trim((string)($_GET['plan_id'] ?? ''));
+    $plan = $membershipPlans[$planId] ?? null;
+    // /subscribe only ever shows a focused checkout for a specific plan chosen on /members.
+    // Bare /subscribe, or an unknown/missing plan_id, sends the member back to pick one.
+    if (!$plan) {
         header('Location: /members', true, 302);
         exit;
     }
-    if ($qTier !== '') {
-        // Show focused subscribe form for the selected tier
-        $match = null; foreach ($tiers as $t) if (strcasecmp($t['name'], $qTier) === 0) { $match = $t; break; }
-        $price = $match['price'] ?? $tiers[0]['price']; $amount = (int)preg_replace('/[^0-9]/','',$price);
-        $content .= '<h1>Subscribe — '.e($qTier).'</h1><div class="card form-card"><form class="form" method="post"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="'.e($qTier).'"><input type="hidden" name="amount" value="'.(int)$amount.'"><input type="hidden" name="period" value="'.e($qPeriod).'">'
-        . '<label>Your name<input name="name" value="'.e($user['name'] ?? '').'"></label>'
-        . '<label>Contact email<input type="email" name="email" value="'.e($user['email'] ?? '').'"></label>'
-        . '<label>Mobile number<input name="phone" placeholder="0712345678" required></label>'
-        . '<label>Choose payment method<select name="method"><option value="mobile">Mobile Money (ClickPesa / M-Pesa)</option><option value="card">Card checkout</option></select></label>'
-        . '<button class="btn gold" type="submit">Subscribe</button></form></div>';
-    } else {
-        // Show plan selection; links open the focused subscribe page
-        $content .= '<h1>Choose your plan.</h1><div class="grid">';
-        foreach ($tiers as $t) {
-            $price = (int)preg_replace('/[^0-9]/','',$t['price']);
-            $content .= '<article class="card"><h3>'.e($t['name']).'</h3><h2>'.e($t['price']).'</h2><p>'.e($t['text']).'</p><div class="grid"><a class="btn" href="/subscribe?tier='.urlencode($t['name']).'&period=monthly">Join — Monthly</a><a class="btn" href="/subscribe?tier='.urlencode($t['name']).'&period=yearly">Join — Yearly</a></div></article>';
-        }
-        $content .= '</div>';
-    }
+    $periodLabel = $plan['period'] === 'yearly' ? 'Yearly Subscription' : 'Monthly Subscription';
+    $content .= '<h1>Subscribe — '.e($plan['tier']).'</h1><div class="card form-card"><p class="muted">'.e($periodLabel).' · TZS '.number_format($plan['amount']).'</p><form class="form" method="post"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="plan_id" value="'.e($plan['id']).'"><input type="hidden" name="tier" value="'.e($plan['tier']).'"><input type="hidden" name="amount" value="'.(int)$plan['amount'].'"><input type="hidden" name="period" value="'.e($plan['period']).'">'
+    . '<label>Your name<input name="name" value="'.e($user['name'] ?? '').'"></label>'
+    . '<label>Contact email<input type="email" name="email" value="'.e($user['email'] ?? '').'"></label>'
+    . '<label>Mobile number<input name="phone" placeholder="0712345678" required></label>'
+    . '<label>Choose payment method<select name="method"><option value="mobile">Mobile Money (ClickPesa / M-Pesa)</option><option value="card">Card checkout</option></select></label>'
+    . '<button class="btn gold" type="submit">Subscribe</button></form></div>';
     $content .= '</div>';
     break;
 case '/admin':
