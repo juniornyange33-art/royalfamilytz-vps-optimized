@@ -31,6 +31,7 @@ if ($path === '/api/clickpesa/webhook' && $_SERVER['REQUEST_METHOD'] === 'POST')
             if ($status) {
                 db()->prepare('UPDATE transactions SET status = ?, provider_ref = COALESCE(provider_ref, ?), failure_message = ? WHERE order_reference = ?')->execute([$status, $data['id'] ?? null, $data['message'] ?? null, $reference]);
                 if ($status === 'paid') { db()->prepare('UPDATE users u JOIN transactions t ON t.user_id = u.id SET u.membership_active = IF(t.type = \'subscription\', 1, u.membership_active), u.membership_id = IF(t.type = \'subscription\' AND u.membership_id IS NULL, CONCAT(\'RFTZ-\', LPAD(u.id, 6, \'0\')), u.membership_id) WHERE t.order_reference = ?')->execute([$reference]); try { db()->prepare('UPDATE trip_bookings b JOIN transactions t ON t.id = b.transaction_id SET b.status = \'paid\' WHERE t.order_reference = ?')->execute([$reference]); } catch (Throwable $ignore) {} }
+                        if ($status === 'paid') { try { send_trip_ticket_email($reference); } catch (Throwable $ignore) {} }
                 if ($status === 'failed') { try { db()->prepare('UPDATE trip_bookings b JOIN transactions t ON t.id = b.transaction_id SET b.status = \'cancelled\' WHERE t.order_reference = ?')->execute([$reference]); } catch (Throwable $ignore) {} }
             }
         }
@@ -193,6 +194,46 @@ function e(string $v): string { return htmlspecialchars($v, ENT_QUOTES, 'UTF-8')
 function app_base_path(): string { $script = str_replace('\\', '/', (string)($_SERVER['SCRIPT_NAME'] ?? '/index.php')); $dir = str_replace('\\', '/', dirname($script)); return ($dir === '.' || $dir === '/') ? '' : rtrim($dir, '/'); }
 function gallery(array $images, string $label, string $class=''): string { $base = app_base_path(); $html='<div class="gallery '.e($class).'" data-slideshow>'; foreach($images as $i=>$image) $html.='<figure class="slide '.($i===0?'is-active':'').'" data-slide><img src="'.e($base).'/assets/community/'.e($image). '" alt="'.e($label).'" loading="'.($i===0?'eager':'lazy').'" /></figure>'; $html.='<button class="slide-prev" type="button" aria-label="Previous photo" data-prev>‹</button><button class="slide-next" type="button" aria-label="Next photo" data-next>›</button><div class="dots">'; foreach($images as $i=>$image) $html.='<button type="button" class="dot '.($i===0?'active':'').'" aria-label="Show photo '.($i+1).'" data-dot="'.$i.'"></button>'; return $html.'</div></div>'; }
 function ensure_profile_columns(): void { static $done = false; if ($done) return; $columns = []; foreach (db()->query('SHOW COLUMNS FROM users')->fetchAll() as $column) $columns[(string)$column['Field']] = true; if (!isset($columns['profile_image'])) db()->exec('ALTER TABLE users ADD COLUMN profile_image VARCHAR(255) NULL'); if (!isset($columns['bio'])) db()->exec('ALTER TABLE users ADD COLUMN bio TEXT NULL'); if (!isset($columns['email_verified_at'])) db()->exec('ALTER TABLE users ADD COLUMN email_verified_at DATETIME NULL'); if (!isset($columns['email_verification_token'])) db()->exec('ALTER TABLE users ADD COLUMN email_verification_token CHAR(64) NULL'); if (!isset($columns['email_verification_expires_at'])) db()->exec('ALTER TABLE users ADD COLUMN email_verification_expires_at DATETIME NULL'); $done = true; }
+
+function send_trip_ticket_email(string $orderRef): void {
+    try {
+        $stmt = db()->prepare("SELECT b.id AS ticket_id, u.name, u.email, u.membership_tier, u.membership_id, t.title AS trip_title, t.destination, t.trip_date, p.name AS pkg_name, tr.amount, tr.currency FROM trip_bookings b JOIN transactions tr ON tr.id = b.transaction_id JOIN users u ON u.id = b.user_id JOIN trips t ON t.id = b.trip_id JOIN trip_packages p ON p.id = b.package_id WHERE tr.order_reference = ? LIMIT 1");
+        $stmt->execute([$orderRef]);
+        $data = $stmt->fetch();
+        if (!$data || !mail_configured()) return;
+
+        $tier = $data['membership_tier'] ?? 'Spring Green';
+        $badge = (stripos($tier, 'gold') !== false) ? 'GOLD 🥇' : ((stripos($tier, 'silver') !== false) ? 'SILVER 🥈' : 'SPRING GREEN 🟢');
+
+        $subject = "Your Trip Ticket - " . $data['trip_title'] . " [" . $badge . "]";
+        $body = "Hello " . $data['name'] . ",\n\n"
+              . "Thank you for your booking! Here is your official event/trip ticket:\n\n"
+              . "--------------------------------------------------------\n"
+              . "ROYAL FAMILY TZ - OFFICIAL TRIP TICKET\n"
+              . "--------------------------------------------------------\n"
+              . "Ticket ID: TKT-" . str_pad((string)$data['ticket_id'], 6, '0', STR_PAD_LEFT) . "\n"
+              . "Passenger Name: " . $data['name'] . "\n"
+              . "Membership Status: " . $tier . " (" . ($data['membership_id'] ?? 'RFTZ-MEMBER') . ")\n"
+              . "Badge ID Tier: " . $badge . "\n\n"
+              . "Trip Event: " . $data['trip_title'] . "\n"
+              . "Destination: " . $data['destination'] . "\n"
+              . "Date: " . ($data['trip_date'] ? date('F j, Y', strtotime($data['trip_date'])) : 'To be announced') . "\n"
+              . "Package: " . $data['pkg_name'] . "\n"
+              . "Amount Paid: " . number_format((float)$data['amount']) . " " . $data['currency'] . "\n"
+              . "Payment Ref: " . $orderRef . "\n"
+              . "--------------------------------------------------------\n\n"
+              . "Please present this digital email ticket upon departure.\n\n"
+              . "Safe travels,\n"
+              . "Royal Family TZ Team";
+
+        send_email((string)$data['email'], $subject, $body);
+    } catch (Throwable $e) {}
+}
+    
+    // Ensure we have a membership_tier column for tier-aware tickets
+    if (!isset($columns['membership_tier'])) {
+        try { db()->exec('ALTER TABLE users ADD COLUMN membership_tier VARCHAR(50) NULL DEFAULT "Spring Green"'); } catch (Throwable $e) {}
+    }
 function public_app_url(string $path = ''): string { $local = is_file(__DIR__.'/local-config.php') ? (require __DIR__.'/local-config.php') : []; $base = rtrim((string)($local['APP_URL'] ?? getenv('APP_URL') ?: ''), '/'); if ($base === '') { $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http'; $base = $scheme . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . app_base_path(); } return $base . '/' . ltrim($path, '/'); }
 function send_verification_email(array $account, string $token): bool { $link = public_app_url('/verify-email?token=' . rawurlencode($token)); $body = "Hello {$account['name']},\n\nPlease verify your Royal Family TZ email address by opening this link:\n{$link}\n\nThis link expires in 24 hours. If you did not create this account, you can ignore this email.\n\nRoyal Family TZ"; return send_email((string)$account['email'], 'Verify your Royal Family TZ email', $body); }
 function ensure_contact_columns(): void { static $done = false; if ($done) return; try { db()->exec("ALTER TABLE contact_messages ADD COLUMN status ENUM('new','replied') NOT NULL DEFAULT 'new'"); } catch (Throwable $e) {} try { db()->exec('ALTER TABLE contact_messages ADD COLUMN replied_at DATETIME NULL'); } catch (Throwable $e) {} $done = true; }
