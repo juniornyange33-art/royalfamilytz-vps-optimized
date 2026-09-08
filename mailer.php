@@ -8,7 +8,7 @@ if (!function_exists('mail_config')) {
         if ($config !== null) return $config;
         
         $app = is_file(__DIR__ . '/config.php') ? require __DIR__ . '/config.php' : [];
-        $mail = $app['mail'] ?? [];
+        $mail = $app['smtp'] ?? [];
 
         return [
             'smtp_host'     => $mail['smtp_host']     ?? getenv('SMTP_HOST')     ?: 'smtp.gmail.com',
@@ -41,7 +41,7 @@ if (!function_exists('send_email')) {
         $resendKey = getenv('RESEND_API_KEY');
         if (!empty($resendKey)) {
             $payload = json_encode([
-                'from'    => 'Royal Family TZ <onboarding@resend.dev>',
+                'from'    => 'Royal Family TZ <no-reply@royalfamilytz.org>',
                 'to'      => [$to],
                 'subject' => $subject,
                 'text'    => $body,
