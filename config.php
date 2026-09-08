@@ -33,11 +33,11 @@ return [
         'redirect_uri'  => (getenv('APP_URL') ?: 'https://royalfamilytz.org') . '/login/google/callback',
     ],
 
-    'clickpesa' => [
-        'client_id' => getenv('CLICKPESA_CLIENT_ID') ?: '',
-        'api_key'   => getenv('CLICKPESA_API_KEY') ?: '',
-        'checksum'  => getenv('CLICKPESA_CHECKSUM') ?: '',
-    ],
+'clickpesa' => [
+    'client_id' => getenv('CLICKPESA_CLIENT_ID') ?: 'IDr7ouxDK7Wo3rXkvErzZcITwIrelu8R',
+    'api_key'   => getenv('CLICKPESA_API_KEY')   ?: 'SKONQwjwnSyrD1yEFg4CKBFmRC0a2FywBYQu0yvpSh',
+    'checksum'  => getenv('CLICKPESA_CHECKSUM')  ?: 'CHKH9FLxY15h1DpFoaAaWrN2vKK1tOaVTGQ',
+],
 
     'smtp' => [
         'host'       => getenv('SMTP_HOST') ?: 'smtp.gmail.com',

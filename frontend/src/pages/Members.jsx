@@ -1,35 +1,45 @@
 import React from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 const tiers = [
-  { name: 'Standard', price: '10,000 TZS / month', perks: ['Membership ID', 'Event notifications', 'Community dashboard'] },
-  { name: 'Supporter', price: '25,000 TZS / month', perks: ['Everything in Standard', 'Priority event invites', 'Recognition on site'] },
+  { key: 'royalfamilymember', name: 'Royal Family', monthly: 2000, yearly: 12000, color: 'springgreen', note: 'Membership ID in spring green' },
+  { key: 'supporter', name: 'Supporter 🥈', monthly: 5000, yearly: 50000, color: 'silver', note: 'Silver membership ID' },
+  { key: 'patron', name: 'Patron 🥇', monthly: 10000, yearly: 50000, color: 'gold', note: 'Patron membership ID in gold' },
 ]
 
 export default function Members() {
   const { user } = useAuth()
+  const navigate = useNavigate()
+
+  function goToSubscribe(tier, period) {
+    if (!user) return navigate('/signup')
+    navigate(`/subscribe?tier=${tier}&period=${period}`)
+  }
+
   return (
-    <div className="max-w-4xl mx-auto px-5 py-20">
-      <h1 className="font-display text-4xl mb-3">Membership</h1>
+    <div className="max-w-5xl mx-auto px-5 py-20">
+      <h1 className="font-display text-4xl mb-3">Become a member</h1>
       <p className="text-ink/70 mb-10 max-w-xl">
-        Members get a Royal Family membership ID, a personal dashboard, and first notice of
-        charity events — funded through a simple monthly subscription.
+        Choose a membership level. Each supports our community programs and gives you a
+        Royal Family membership ID and access to member perks.
       </p>
-      <div className="grid md:grid-cols-2 gap-6">
+
+      <div className="grid md:grid-cols-3 gap-6">
         {tiers.map((t) => (
-          <div key={t.name} className="border border-ink/15 rounded-2xl p-6">
-            <h3 className="font-display text-2xl text-royal">{t.name}</h3>
-            <p className="text-gold font-semibold mt-1 mb-4">{t.price}</p>
-            <ul className="space-y-1 text-sm text-ink/70 mb-6">
-              {t.perks.map((p) => <li key={p}>• {p}</li>)}
-            </ul>
-            <Link
-              to={user ? '/subscribe' : '/signup'}
-              className="block text-center bg-royal text-parchment py-2.5 rounded-full font-semibold"
-            >
-              {user ? 'Subscribe' : 'Create account to join'}
-            </Link>
+          <div key={t.key} className="border border-ink/15 rounded-2xl p-6 flex flex-col items-start">
+            <div className="flex items-center justify-between w-full">
+              <h3 className="font-display text-2xl text-royal">{t.name}</h3>
+              <div className="text-sm text-ink/60">{t.note}</div>
+            </div>
+            <div className="mt-4 w-full">
+              <div className="text-royal font-semibold">Monthly: TZS {t.monthly.toLocaleString()}</div>
+              <div className="text-ink/60">Yearly: TZS {t.yearly.toLocaleString()}</div>
+            </div>
+            <div className="mt-6 w-full flex gap-3">
+              <button onClick={() => goToSubscribe(t.key, 'monthly')} className="flex-1 bg-royal text-parchment py-2 rounded-full font-semibold">Become member (Monthly)</button>
+              <button onClick={() => goToSubscribe(t.key, 'yearly')} className="flex-1 border border-ink/20 py-2 rounded-full font-semibold">Pay yearly</button>
+            </div>
           </div>
         ))}
       </div>

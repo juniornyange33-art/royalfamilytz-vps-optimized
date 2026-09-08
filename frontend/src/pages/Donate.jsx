@@ -1,9 +1,9 @@
 import React, { useState } from 'react'
 
-const amounts = [10000, 25000, 50000, 100000]
+const amounts = [5000, 10000, 25000, 50000]
 
 export default function Donate() {
-  const [amount, setAmount] = useState(25000)
+  const [amount, setAmount] = useState(10000)
   const [method, setMethod] = useState('mobile')
 
   async function handleDonate() {
@@ -23,11 +23,14 @@ export default function Donate() {
       <h1 className="font-display text-4xl mb-3">Support the mission</h1>
       <p className="text-ink/70 mb-8">Donations fund charity events and youth talent programs directly.</p>
 
-      <div className="grid grid-cols-4 gap-3 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
         {amounts.map((a) => (
           <button key={a} onClick={() => setAmount(a)}
-            className={`py-3 rounded-xl border font-semibold text-sm ${amount === a ? 'border-royal bg-royal/10 text-royal' : 'border-ink/20'}`}>
-            {a.toLocaleString()}
+            className={`flex items-center justify-center h-20 rounded-xl border font-semibold text-sm shadow-sm transition-colors ${amount === a ? 'border-royal bg-royal/10 text-royal' : 'border-ink/20 bg-white'}`}>
+            <div>
+              <div className="text-sm">TZS</div>
+              <div className="text-lg font-display">{a.toLocaleString()}</div>
+            </div>
           </button>
         ))}
       </div>

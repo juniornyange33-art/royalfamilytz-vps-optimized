@@ -1,10 +1,17 @@
 <?php
 declare(strict_types=1);
 
-$appUrl = trim(getenv('APP_URL') ?: 'https://royalfamilytz.org', '[]');
+$smtpUser = getenv('SMTP_USER') ?: 'royalfamilytz.org@gmail.com';
+$smtpPass = getenv('SMTP_PASSWORD') ?: getenv('SMTP_PASS') ?: '';
+
+// Define global legacy constants if expected by functions
+if (!defined('SMTP_USER')) define('SMTP_USER', $smtpUser);
+if (!defined('SMTP_PASS')) define('SMTP_PASS', $smtpPass);
+if (!defined('SMTP_HOST')) define('SMTP_HOST', getenv('SMTP_HOST') ?: 'smtp.gmail.com');
+if (!defined('SMTP_PORT')) define('SMTP_PORT', (int)(getenv('SMTP_PORT') ?: 587));
 
 return [
-    'APP_URL' => $appUrl,
+    'APP_URL' => trim(getenv('APP_URL') ?: 'https://royalfamilytz.org', '[]'),
 
     // Database
     'DB_DRIVER' => getenv('DB_DRIVER') ?: 'mysql',
@@ -23,13 +30,23 @@ return [
     'CLICKPESA_API_KEY'   => getenv('CLICKPESA_API_KEY') ?: '',
     'CLICKPESA_CHECKSUM'  => getenv('CLICKPESA_CHECKSUM') ?: '',
 
-    // Gmail SMTP (Maps both key variants)
+    // Gmail SMTP (Provides both array structures)
     'SMTP_HOST'       => getenv('SMTP_HOST') ?: 'smtp.gmail.com',
     'SMTP_PORT'       => (int)(getenv('SMTP_PORT') ?: 587),
     'SMTP_SECURITY'   => getenv('SMTP_SECURITY') ?: 'tls',
-    'SMTP_USER'       => getenv('SMTP_USER') ?: 'royalfamilytz.org@gmail.com',
-    'SMTP_PASS'       => getenv('SMTP_PASSWORD') ?: getenv('SMTP_PASS') ?: '',
-    'SMTP_PASSWORD'   => getenv('SMTP_PASSWORD') ?: getenv('SMTP_PASS') ?: '',
-    'MAIL_FROM'       => getenv('MAIL_FROM') ?: 'royalfamilytz.org@gmail.com',
+    'SMTP_USER'       => $smtpUser,
+    'SMTP_PASS'       => $smtpPass,
+    'SMTP_PASSWORD'   => $smtpPass,
+    'MAIL_FROM'       => getenv('MAIL_FROM') ?: $smtpUser,
     'MAIL_FROM_NAME'  => getenv('MAIL_FROM_NAME') ?: 'Royal Family TZ',
+
+    'smtp' => [
+        'host'       => getenv('SMTP_HOST') ?: 'smtp.gmail.com',
+        'port'       => (int)(getenv('SMTP_PORT') ?: 587),
+        'security'   => getenv('SMTP_SECURITY') ?: 'tls',
+        'username'   => $smtpUser,
+        'password'   => $smtpPass,
+        'from_email' => getenv('MAIL_FROM') ?: $smtpUser,
+        'from_name'  => getenv('MAIL_FROM_NAME') ?: 'Royal Family TZ',
+    ]
 ];

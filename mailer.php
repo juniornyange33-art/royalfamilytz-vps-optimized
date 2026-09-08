@@ -41,7 +41,7 @@ if (!function_exists('send_email')) {
         $resendKey = getenv('RESEND_API_KEY');
         if (!empty($resendKey)) {
             $payload = json_encode([
-                'from'    => 'Royal Family TZ <no-reply@royalfamilytz.org>',
+                'from'    => 'Royal Family TZ <onboarding@resend.dev>',
                 'to'      => [$to],
                 'subject' => $subject,
                 'text'    => $body,
@@ -59,6 +59,11 @@ if (!function_exists('send_email')) {
             $response = curl_exec($ch);
             $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
             curl_close($ch);
+
+            // Log error if API request fails
+            if ($httpCode < 200 || $httpCode >= 300) {
+                error_log("Resend Mail Error (HTTP {$httpCode}): " . $response);
+            }
 
             return $httpCode >= 200 && $httpCode < 300;
         }

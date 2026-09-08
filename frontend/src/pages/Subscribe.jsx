@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext'
+import { useLocation } from 'react-router-dom'
 
 // Kicks off a subscription payment. The backend creates a pending
 // transaction, talks to the chosen provider, and — on confirmed webhook —
@@ -8,6 +9,8 @@ export default function Subscribe() {
   const { user } = useAuth()
   const [method, setMethod] = useState('mobile')
   const [phone, setPhone] = useState('')
+  const [tier, setTier] = useState('standard')
+  const [period, setPeriod] = useState('monthly')
   const [loading, setLoading] = useState(false)
 
   async function handleSubscribe() {
@@ -16,7 +19,7 @@ export default function Subscribe() {
       const res = await fetch(`${import.meta.env.VITE_API_URL}/api/payments/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${await user.getIdToken()}` },
-        body: JSON.stringify({ method, phone, tier: 'standard' }),
+        body: JSON.stringify({ method, phone, tier, period }),
       })
       const data = await res.json()
       if (data.redirectUrl) window.location.href = data.redirectUrl
@@ -25,6 +28,15 @@ export default function Subscribe() {
       setLoading(false)
     }
   }
+
+  const location = useLocation()
+  useEffect(() => {
+    const qp = new URLSearchParams(location.search)
+    const qTier = qp.get('tier')
+    const qPeriod = qp.get('period')
+    if (qTier) setTier(qTier)
+    if (qPeriod) setPeriod(qPeriod)
+  }, [location.search])
 
   return (
     <div className="max-w-md mx-auto px-5 py-16">
@@ -41,10 +53,12 @@ export default function Subscribe() {
           className="w-full border border-ink/20 rounded-lg px-4 py-3 mb-4" />
       )}
 
-      <button onClick={handleSubscribe} disabled={loading}
-        className="w-full bg-royal text-parchment py-3 rounded-full font-semibold disabled:opacity-50">
-        {loading ? 'Processing…' : 'Pay & activate membership'}
-      </button>
+      <div className="mt-4">
+        <button onClick={handleSubscribe} disabled={loading}
+          className="w-full bg-royal text-parchment py-3 rounded-full font-semibold disabled:opacity-50">
+          {loading ? 'Processing…' : `Pay & activate (${tier} / ${period})`}
+        </button>
+      </div>
       <p className="text-xs text-ink/40 mt-4">
         Payments are processed securely and never stored on our servers — card details go
         directly to the payment provider (Stripe / PayPal / mobile money gateway).

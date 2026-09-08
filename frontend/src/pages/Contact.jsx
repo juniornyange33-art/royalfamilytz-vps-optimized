@@ -25,15 +25,16 @@ export default function Contact() {
     <div className="max-w-xl mx-auto px-5 py-20">
       <h1 className="font-display text-4xl mb-6">Contact us</h1>
       <form onSubmit={handleSubmit} className="space-y-4">
+        {/** shared input styling to keep bars equal and consistent */}
         <input required placeholder="Your name" value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
-          className="w-full border border-ink/20 rounded-lg px-4 py-3" />
+          className="w-full border border-ink/20 rounded-lg px-4 py-3 h-12" />
         <input required type="email" placeholder="Your email" value={form.email}
           onChange={(e) => setForm({ ...form, email: e.target.value })}
-          className="w-full border border-ink/20 rounded-lg px-4 py-3" />
+          className="w-full border border-ink/20 rounded-lg px-4 py-3 h-12" />
         <textarea required placeholder="Message" rows={5} value={form.message}
           onChange={(e) => setForm({ ...form, message: e.target.value })}
-          className="w-full border border-ink/20 rounded-lg px-4 py-3" />
+          className="w-full border border-ink/20 rounded-lg px-4 py-3 min-h-[120px]" />
         <button className="bg-royal text-parchment px-6 py-3 rounded-full font-semibold">
           {status === 'sending' ? 'Sending…' : 'Send message'}
         </button>
