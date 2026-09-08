@@ -193,3 +193,258 @@ function send_trip_ticket_email(string $orderRef): void {
         if (!$data || !mail_configured()) return;
         
         $tier = $data['membership_tier'] ?? 'Spring Green';
+$badge = ($tier === 'Gold Patron') ? 'GOLD 🥇' : (($tier === 'Silver Supporter') ? 'SILVER 🥈' : 'SPRING GREEN 🟢');
+        
+        $subject = "Your Trip Ticket - " . $data['trip_title'] . " [" . $badge . "]";
+        $body = "Hello " . $data['name'] . ",\n\n"
+              . "Thank you for your booking! Here is your official event/trip ticket:\n\n"
+              . "--------------------------------------------------------\n"
+              . "ROYAL FAMILY TZ - OFFICIAL TRIP TICKET\n"
+              . "--------------------------------------------------------\n"
+              . "Ticket ID: TKT-" . str_pad((string)$data['ticket_id'], 6, '0', STR_PAD_LEFT) . "\n"
+              . "Passenger Name: " . $data['name'] . "\n"
+              . "Membership Status: " . $tier . " (" . ($data['membership_id'] ?? 'RFTZ-MEMBER') . ")\n"
+              . "Badge ID Tier: " . $badge . "\n\n"
+              . "Trip Event: " . $data['trip_title'] . "\n"
+              . "Destination: " . $data['destination'] . "\n"
+              . "Date: " . ($data['trip_date'] ? date('F j, Y', strtotime($data['trip_date'])) : 'To be announced') . "\n"
+              . "Package: " . $data['pkg_name'] . "\n"
+              . "Amount Paid: " . number_format((float)$data['amount']) . " " . $data['currency'] . "\n"
+              . "Payment Ref: " . $orderRef . "\n"
+              . "--------------------------------------------------------\n\n"
+              . "Please present this digital email ticket upon departure.\n\n"
+              . "Safe travels,\n"
+              . "Royal Family TZ Team";
+              
+        send_email((string)$data['email'], $subject, $body);
+    } catch (Throwable $e) {}
+}
+
+function ensure_contact_columns(): void { static $done = false; if ($done) return; try { db()->exec("ALTER TABLE contact_messages ADD COLUMN status ENUM('new','replied') NOT NULL DEFAULT 'new'"); } catch (Throwable $e) {} $done = true; }
+function ensure_trip_tables(): void { static $done = false; if ($done) return; db()->exec("CREATE TABLE IF NOT EXISTS trips (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(180) NOT NULL, slug VARCHAR(180) NOT NULL UNIQUE, description TEXT NOT NULL, destination VARCHAR(180) NOT NULL, trip_date DATE NULL, meeting_point VARCHAR(180) NULL, poster_image VARCHAR(255) NULL, published TINYINT(1) NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB"); $done = true; }
+function logo_url(): string { return app_base_path() . '/assets/royal-family-logo.jpg'; }
+
+function nav(string $current, ?array $user): void { $base=app_base_path(); $links=['/'=>'Home','/about'=>'About','/members'=>'Members','/trips'=>'Trips','/blog'=>'Blog','/contact'=>'Contact','/donate'=>'Donate']; echo '<header><div class="nav"><a class="brand" href="'.$base.'/"><img class="brand-logo" src="'.e(logo_url()).'" alt="Royal Family TZ logo"><span>Royal Family <small>Tanzania</small></span></a><input class="menu-checkbox" type="checkbox" id="mobile-menu"><label class="menu-toggle" for="mobile-menu" aria-label="Open menu">☰</label><nav data-mobile-nav>'; foreach($links as $href=>$label) echo '<a class="'.($current===$href?'active':'').'" href="'.e($base.$href).'">'.$label.'</a>'; if($user) echo '<a href="'.e($base.'/dashboard').'">Dashboard</a><a class="outline" href="'.e($base.'/logout').'">Log out</a>'; else echo '<a href="'.e($base.'/login').'">Log in</a>'; echo '</nav></div></header>'; }
+
+function layout(string $title, string $content, string $path, ?array $user, ?string $flash=null): void { 
+    echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="icon" href="'.e(logo_url()).'" type="image/png">
+    <title>'.e($title).' | '.APP_NAME.'</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet">
+    <style>'.css().'</style></head><body>'; 
+    nav($path,$user); 
+    if($flash) echo '<div class="flash">'.e($flash).'</div>'; 
+    echo '<main>'.$content.'</main>
+    <footer><div><strong>Royal Family TZ</strong><p>Community, youth talent, and practical impact in Tanzania.</p></div><div><strong>Find us in Arusha</strong><p>Arusha, Tanzania</p><p>Phone: <a href="tel:0774002734">0774002734</a></p></div><div><a href="/about">About</a><a href="/contact">Contact</a><a href="/donate">Support us</a></div><p class="copyright">© '.date('Y').' Royal Family TZ</p></footer></body></html>'; 
+}
+
+function css(): string { return <<<'CSS'
+:root{--ink:#17251f;--royal:#285743;--gold:#c9a54c;--spring:#00FF7F;--silver:#C0C0C0;--paper:#f7f3e8;--muted:#66736c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'DM Sans',sans-serif;line-height:1.6}
+h1,h2,h3{font-family:Fraunces,serif;line-height:1.1;margin:0 0 18px}
+a{color:inherit;text-decoration:none}
+.nav{max-width:1180px;margin:auto;padding:22px 28px;display:flex;align-items:center;justify-content:space-between}
+.brand-logo{width:64px;height:64px;object-fit:contain;border-radius:12px;background:#fff;padding:4px}
+.brand{display:flex;align-items:center;gap:10px;font-family:Fraunces;font-size:1.15rem;font-weight:700}
+nav{display:flex;align-items:center;gap:20px}
+nav a:hover,nav a.active{color:var(--royal);border-bottom:2px solid var(--gold)}
+.btn{display:inline-block;background:var(--royal);color:#fff;border:0;border-radius:999px;padding:12px 22px;font-weight:700;cursor:pointer;text-align:center}
+.btn.gold{background:var(--gold);color:var(--ink)}
+.btn.spring{background:var(--spring);color:#05381e}
+.btn.silver{background:var(--silver);color:#222}
+.page{max-width:1080px;margin:40px auto;padding:0 28px}
+.center{text-align:center}
+.eyebrow{color:var(--gold);font-weight:700;letter-spacing:.13em;text-transform:uppercase;font-size:.76rem}
+
+/* Donation Compact Grid Layout */
+.donate-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;margin-top:24px}
+.donate-card{background:#fff;border:1px solid #e8dfcb;border-radius:14px;padding:20px;box-shadow:0 4px 12px rgba(0,0,0,0.04);display:flex;flex-direction:column;justify-content:space-between}
+.donate-card h3{font-size:1.25rem;margin-bottom:8px}
+.donate-card p{font-size:.9rem;color:var(--muted);margin-bottom:14px}
+
+/* Form Styles & Standard Equal Inputs */
+.form-card{max-width:560px;margin:30px auto;background:#fff;padding:28px;border-radius:16px;border:1px solid #e8dfcb}
+.form{display:grid;gap:16px}
+.form label{font-weight:700;font-size:.9rem;display:flex;flex-direction:column;gap:6px}
+.form input[type="text"],.form input[type="email"],.form input[type="number"],.form input[type="password"],.form select,.form textarea{width:100%;padding:12px 14px;border:1px solid #c9c0b0;border-radius:8px;background:#fff;font-family:inherit;font-size:.95rem;box-sizing:border-box}
+.form textarea{resize:vertical;min-height:120px}
+
+/* Payment Gateway Toggle Grid */
+.payment-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:10px 0}
+.payment-option input[type="radio"]{display:none}
+.payment-option label{display:flex;align-items:center;justify-content:center;padding:12px;border:2px solid #e8dfcb;border-radius:8px;cursor:pointer;background:#fff;font-weight:700;font-size:.85rem}
+.payment-option input[type="radio"]:checked + label{border-color:var(--gold);background:#fffef0}
+
+/* Professional Membership Categories Styling */
+.membership-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:30px}
+.member-card{background:#fff;border:2px solid #e8dfcb;border-radius:18px;padding:28px;text-align:center;box-shadow:0 8px 24px rgba(0,0,0,0.05);display:flex;flex-direction:column;justify-content:space-between}
+.member-card.spring-card{border-color:var(--spring)}
+.member-card.silver-card{border-color:var(--silver)}
+.member-card.gold-card{border-color:var(--gold)}
+.tier-badge{display:inline-block;padding:4px 12px;border-radius:20px;font-size:.8rem;font-weight:700;margin-bottom:12px;text-transform:uppercase}
+.badge-spring{background:#00FF7F22;color:#007a3d;border:1px solid var(--spring)}
+.badge-silver{background:#C0C0C033;color:#444;border:1px solid var(--silver)}
+.badge-gold{background:#c9a54c22;color:#8a6d1c;border:1px solid var(--gold)}
+.price-option{background:#fdfbf7;border:1px solid #ebd8b0;border-radius:10px;padding:12px;margin:8px 0;text-align:left;display:flex;justify-content:space-between;align-items:center}
+.price-option strong{font-size:1.1rem;color:var(--royal)}
+
+/* Responsive adjustments */
+@media(max-width:850px){.membership-grid{grid-template-columns:1fr}.payment-grid{grid-template-columns:1fr}}
+CSS; }
+
+$content = '';
+switch ($path) {
+    case '/': 
+        $content='<div class="page center"><h1>A Stronger Tanzania Starts With Us</h1><p class="eyebrow">Royal Family TZ Platform</p><a class="btn gold" href="/members">Become a Member</a></div>'; 
+        break;
+
+    case '/donate': 
+        $content='<div class="page"><div class="center"><p class="eyebrow">Support Our Cause</p><h1>Make a Donation</h1></div>
+        <div class="donate-grid">
+            <article class="donate-card">
+                <div>
+                    <h3>Youth Empowerment</h3>
+                    <p>Help us fund skill training, workshops, and sports equipment for young Tanzanians.</p>
+                </div>
+                <button class="btn gold" onclick="document.getElementById(\'amount\').value=10000">Donate 10,000 TZS</button>
+            </article>
+            <article class="donate-card">
+                <div>
+                    <h3>Community Outreach</h3>
+                    <p>Support our charity visits, local community care, and family development events.</p>
+                </div>
+                <button class="btn gold" onclick="document.getElementById(\'amount\').value=25000">Donate 25,000 TZS</button>
+            </article>
+            <article class="donate-card">
+                <div>
+                    <h3>Talent & Culture</h3>
+                    <p>Directly assist young artists, performers, and creators to develop their craft.</p>
+                </div>
+                <button class="btn gold" onclick="document.getElementById(\'amount\').value=50000">Donate 50,000 TZS</button>
+            </article>
+        </div>
+        <div class="form-card" style="margin-top:40px;">
+            <form class="form" method="post">
+                <input type="hidden" name="action" value="donate">
+                <label>Amount (TZS)<input id="amount" name="amount" type="number" min="1000" placeholder="e.g. 20000" required></label>
+                <label>Mobile Number<input name="phone" placeholder="07XXXXXXXX" required></label>
+                <label>Payment Method</label>
+                <div class="payment-grid">
+                    <div class="payment-option"><input type="radio" name="method" value="mpesa" id="m1" checked><label for="m1">M-Pesa</label></div>
+                    <div class="payment-option"><input type="radio" name="method" value="tigopesa" id="m2"><label for="m2">Tigo Pesa</label></div>
+                    <div class="payment-option"><input type="radio" name="method" value="airtelmoney" id="m3"><label for="m3">Airtel Money</label></div>
+                    <div class="payment-option"><input type="radio" name="method" value="card" id="m4"><label for="m4">Card</label></div>
+                </div>
+                <button class="btn gold" type="submit">Complete Donation</button>
+            </form>
+        </div></div>'; 
+        break;
+
+    case '/contact': 
+        $content='<div class="page"><div class="center"><p class="eyebrow">Get in touch</p><h1>Contact Us</h1></div>
+        <div class="form-card">
+            <form class="form" method="post">
+                <input type="hidden" name="action" value="contact">
+                <label>Full Name<input type="text" name="name" placeholder="Enter your full name" required></label>
+                <label>Email Address<input type="email" name="email" placeholder="Enter your email" required></label>
+                <label>Subject / Topic<input type="text" name="subject" placeholder="What is this regarding?" required></label>
+                <label>Message<textarea name="message" placeholder="Type your message here..." required></textarea></label>
+                <button class="btn" type="submit">Send Message</button>
+            </form>
+        </div></div>'; 
+        break;
+
+    case '/members': 
+        $content='<div class="page"><div class="center"><p class="eyebrow">Join The Family</p><h1>Become A Member</h1><p>Choose a tier that matches your commitment level and unlock exclusive digital membership IDs.</p></div>
+        <div class="membership-grid">
+            <!-- Royal Family Member Tier -->
+            <article class="member-card spring-card">
+                <div>
+                    <span class="tier-badge badge-spring">Spring Green ID 🟢</span>
+                    <h2>Royal Family Member</h2>
+                    <p>Basic tier access for active community participants.</p>
+                    <div class="price-option">
+                        <div><strong>2,000 TZS</strong><br><small>Monthly Subscription</small></div>
+                        '.($user ? '<form method="post" style="margin:0"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="Royal Family Member (Monthly)"><input type="hidden" name="amount" value="2000"><button class="btn spring" type="submit">Join</button></form>' : '<a class="btn spring" href="/login">Join</a>').'
+                    </div>
+                    <div class="price-option">
+                        <div><strong>12,000 TZS</strong><br><small>Yearly Subscription</small></div>
+                        '.($user ? '<form method="post" style="margin:0"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="Royal Family Member (Yearly)"><input type="hidden" name="amount" value="12000"><button class="btn spring" type="submit">Join</button></form>' : '<a class="btn spring" href="/login">Join</a>').'
+                    </div>
+                </div>
+            </article>
+
+            <!-- Supporters Tier -->
+            <article class="member-card silver-card">
+                <div>
+                    <span class="tier-badge badge-silver">Silver Membership ID 🥈</span>
+                    <h2>Supporter</h2>
+                    <p>Dedicated supporters making a continuous monthly or annual impact.</p>
+                    <div class="price-option">
+                        <div><strong>5,000 TZS</strong><br><small>Monthly Subscription</small></div>
+                        '.($user ? '<form method="post" style="margin:0"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="Silver Supporter (Monthly)"><input type="hidden" name="amount" value="5000"><button class="btn silver" type="submit">Join</button></form>' : '<a class="btn silver" href="/login">Join</a>').'
+                    </div>
+                    <div class="price-option">
+                        <div><strong>50,000 TZS</strong><br><small>Yearly Subscription</small></div>
+                        '.($user ? '<form method="post" style="margin:0"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="Silver Supporter (Yearly)"><input type="hidden" name="amount" value="50000"><button class="btn silver" type="submit">Join</button></form>' : '<a class="btn silver" href="/login">Join</a>').'
+                    </div>
+                </div>
+            </article>
+
+            <!-- Patron Tier -->
+            <article class="member-card gold-card">
+                <div>
+                    <span class="tier-badge badge-gold">Gold Patron ID 🥇</span>
+                    <h2>Patron</h2>
+                    <p>Highest status supporting major projects, trips, and development programs.</p>
+                    <div class="price-option">
+                        <div><strong>10,000 TZS</strong><br><small>Monthly Subscription</small></div>
+                        '.($user ? '<form method="post" style="margin:0"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="Gold Patron (Monthly)"><input type="hidden" name="amount" value="10000"><button class="btn gold" type="submit">Join</button></form>' : '<a class="btn gold" href="/login">Join</a>').'
+                    </div>
+                    <div class="price-option">
+                        <div><strong>50,000 TZS</strong><br><small>Yearly Subscription</small></div>
+                        '.($user ? '<form method="post" style="margin:0"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="Gold Patron (Yearly)"><input type="hidden" name="amount" value="50000"><button class="btn gold" type="submit">Join</button></form>' : '<a class="btn gold" href="/login">Join</a>').'
+                    </div>
+                </div>
+            </article>
+        </div></div>'; 
+        break;
+
+    case '/trips': 
+        $userTier = $user['tier'] ?? 'Spring Green';
+        $content='<div class="page"><div class="center"><p class="eyebrow">Travel & Events</p><h1>Upcoming Community Trips</h1><p>Book tickets and receive instant email passes tied to your <strong>'.$userTier.'</strong> status.</p></div>
+        <div class="form-card">
+            <h3>Book Event Ticket</h3>
+            '.($user ? '
+            <form class="form" method="post">
+                <input type="hidden" name="action" value="trip_book">
+                <input type="hidden" name="trip_id" value="1">
+                <input type="hidden" name="package_id" value="1">
+                <label>Current Status Badge
+                    <input type="text" value="'.e($userTier).'" disabled>
+                </label>
+                <label>Number of Guests
+                    <input type="number" name="guests" min="1" value="1" required>
+                </label>
+                <label>Mobile Number
+                    <input type="text" name="phone" placeholder="07XXXXXXXX" required>
+                </label>
+                <label>Payment Method
+                    <select name="method">
+                        <option value="mobile">Mobile Money (M-Pesa / Tigo / Airtel)</option>
+                        <option value="card">Credit / Debit Card</option>
+                    </select>
+                </label>
+                <button class="btn gold" type="submit">Pay & Issue Email Ticket</button>
+            </form>' : '<div class="center"><p>Please log in to purchase trip tickets.</p><a class="btn" href="/login">Log In Now</a></div>').'
+        </div></div>'; 
+        break;
+
+    default:
+        $content='<div class="page center"><h1>Page Not Found</h1><a class="btn" href="/">Return Home</a></div>';
+        break;
+}
+
+layout('Royal Family TZ', $content, $path,
