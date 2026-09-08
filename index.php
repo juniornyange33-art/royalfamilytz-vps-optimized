@@ -673,6 +673,52 @@ switch ($path) {
         </div></div>';
         break;
 
+    case '/about':
+        $content = '<div class="page"><div class="center"><p class="eyebrow">About Us</p><h1>About Royal Family TZ</h1><p>Royal Family TZ is a community-driven organisation focused on youth empowerment, culture, and community development across Tanzania. We run training, events, trips and outreach projects.</p><a class="btn" href="/donate">Support our work</a></div></div>';
+        break;
+
+    case '/blog':
+        $postsHtml = '<p>No posts yet. Check back soon.</p>';
+        try {
+            $rows = db()->query('SELECT id,title,slug,created_at FROM posts WHERE published = 1 ORDER BY created_at DESC LIMIT 10');
+            $posts = $rows->fetchAll();
+            if ($posts) {
+                $postsHtml = '<ul>';
+                foreach ($posts as $p) {
+                    $postsHtml .= '<li><a href="/blog/' . e($p['slug']) . '">' . e($p['title']) . '</a> <small>' . e($p['created_at']) . '</small></li>';
+                }
+                $postsHtml .= '</ul>';
+            }
+        } catch (Throwable $e) {}
+        $content = '<div class="page"><div class="center"><p class="eyebrow">Updates</p><h1>Blog</h1></div><div class="form-card">' . $postsHtml . '</div></div>';
+        break;
+
+    case '/login':
+        $content = '<div class="page"><div class="center"><p class="eyebrow">Welcome back</p><h1>Log in</h1></div><div class="form-card"><form class="form" method="post"><input type="hidden" name="action" value="login"><label>Email<input type="email" name="email" required></label><label>Password<input type="password" name="password" required></label><button class="btn" type="submit">Sign in</button></form><p style="text-align:center;margin-top:12px">Don\'t have an account? <a href="/signup">Sign up</a></p></div></div>';
+        break;
+
+    case '/signup':
+        $content = '<div class="page"><div class="center"><p class="eyebrow">Join the family</p><h1>Sign up</h1></div><div class="form-card"><form class="form" method="post"><input type="hidden" name="action" value="signup"><label>Full name<input type="text" name="name" required></label><label>Email<input type="email" name="email" required></label><label>Password<input type="password" name="password" required></label><button class="btn gold" type="submit">Create account</button></form></div></div>';
+        break;
+
+    case '/dashboard':
+        if (!$user) {
+            header('Location: /login');
+            exit;
+        }
+        $membership = $user['membership'] ? ('<p><strong>Member:</strong> Yes (' . e($user['membership_id'] ?? '—') . ')</p>') : '<p><strong>Member:</strong> No</p>';
+        $content = '<div class="page"><div class="center"><p class="eyebrow">Dashboard</p><h1>Welcome, ' . e($user['name']) . '</h1><div class="form-card"><p><strong>Email:</strong> ' . e($user['email']) . '</p>' . $membership . '<p><a class="btn" href="/members">Manage membership</a> <a class="btn" href="/trips">My bookings</a></p></div></div></div>';
+        break;
+
+    case '/admin':
+        if (!$user || ($user['role'] ?? '') !== 'admin') {
+            http_response_code(403);
+            $content = '<div class="page"><h1>Access denied</h1><p>You must be an administrator to view this page.</p></div>';
+            break;
+        }
+        $content = '<div class="page"><div class="center"><p class="eyebrow">Admin</p><h1>Administration</h1><div class="form-card"><a class="btn gold" href="/admin/reports">Reports & Exports</a><a class="btn" href="/admin/report-users.csv">Download CSV</a></div></div></div>';
+        break;
+
     case '/admin/reports':
         $userCount = $memberCount = $paidTotal = $pendingTotal = 0;
         $transactionRows = '';
