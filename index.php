@@ -436,11 +436,11 @@ case '/members':
                     <p>Basic tier access for active community participants.</p>
                     <div class="price-option">
                         <div><strong>2,000 TZS</strong><br><small>Monthly Subscription</small></div>
-                        ' . ($user ? '<form method="post" style="margin:0"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="Royal Family Member (Monthly)"><input type="hidden" name="amount" value="2000"><button class="btn spring" type="submit">Join</button></form>' : '<a class="btn spring" href="/login">Join</a>') . '
+                        ' . ($user ? '<a class="btn spring" href="/subscribe?tier=Royal%20Family%20Member&period=monthly">Join</a>' : '<a class="btn spring" href="/login">Join</a>') . '
                     </div>
                     <div class="price-option">
                         <div><strong>12,000 TZS</strong><br><small>Yearly Subscription</small></div>
-                        ' . ($user ? '<form method="post" style="margin:0"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="Royal Family Member (Yearly)"><input type="hidden" name="amount" value="12000"><button class="btn spring" type="submit">Join</button></form>' : '<a class="btn spring" href="/login">Join</a>') . '
+                        ' . ($user ? '<a class="btn spring" href="/subscribe?tier=Royal%20Family%20Member&period=yearly">Join</a>' : '<a class="btn spring" href="/login">Join</a>') . '
                     </div>
                 </div>
             </article>
@@ -452,11 +452,11 @@ case '/members':
                     <p>Dedicated supporters making a continuous monthly or annual impact.</p>
                     <div class="price-option">
                         <div><strong>5,000 TZS</strong><br><small>Monthly Subscription</small></div>
-                        ' . ($user ? '<form method="post" style="margin:0"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="Silver Supporter (Monthly)"><input type="hidden" name="amount" value="5000"><button class="btn silver" type="submit">Join</button></form>' : '<a class="btn silver" href="/login">Join</a>') . '
+                        ' . ($user ? '<a class="btn silver" href="/subscribe?tier=Silver%20Supporter&period=monthly">Join</a>' : '<a class="btn silver" href="/login">Join</a>') . '
                     </div>
                     <div class="price-option">
                         <div><strong>50,000 TZS</strong><br><small>Yearly Subscription</small></div>
-                        ' . ($user ? '<form method="post" style="margin:0"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="Silver Supporter (Yearly)"><input type="hidden" name="amount" value="50000"><button class="btn silver" type="submit">Join</button></form>' : '<a class="btn silver" href="/login">Join</a>') . '
+                        ' . ($user ? '<a class="btn silver" href="/subscribe?tier=Silver%20Supporter&period=yearly">Join</a>' : '<a class="btn silver" href="/login">Join</a>') . '
                     </div>
                 </div>
             </article>
@@ -468,11 +468,11 @@ case '/members':
                     <p>Highest status supporting major projects, trips, and development programs.</p>
                     <div class="price-option">
                         <div><strong>10,000 TZS</strong><br><small>Monthly Subscription</small></div>
-                        ' . ($user ? '<form method="post" style="margin:0"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="Gold Patron (Monthly)"><input type="hidden" name="amount" value="10000"><button class="btn gold" type="submit">Join</button></form>' : '<a class="btn gold" href="/login">Join</a>') . '
+                        ' . ($user ? '<a class="btn gold" href="/subscribe?tier=Gold%20Patron&period=monthly">Join</a>' : '<a class="btn gold" href="/login">Join</a>') . '
                     </div>
                     <div class="price-option">
                         <div><strong>50,000 TZS</strong><br><small>Yearly Subscription</small></div>
-                        ' . ($user ? '<form method="post" style="margin:0"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="Gold Patron (Yearly)"><input type="hidden" name="amount" value="50000"><button class="btn gold" type="submit">Join</button></form>' : '<a class="btn gold" href="/login">Join</a>') . '
+                        ' . ($user ? '<a class="btn gold" href="/subscribe?tier=Gold%20Patron&period=yearly">Join</a>' : '<a class="btn gold" href="/login">Join</a>') . '
                     </div>
                 </div>
             </article>
@@ -504,44 +504,31 @@ case '/login': $content='<div class="page"><div class="form-card"><p class="eyeb
 case '/signup': $content='<div class="page"><div class="form-card"><p class="eyebrow">Start your journey</p><h2>Create your account</h2><a class="google-btn" href="'.e(app_base_path()).'/auth/google/start"><span class="google-icon" aria-hidden="true">G</span> Sign up with Google</a><div class="or">or create an account with email</div><form class="form" method="post" enctype="application/x-www-form-urlencoded"><input type="hidden" name="action" value="signup"><label>Full name<input name="name" required></label><label>Email<input type="email" name="email" required></label><label>Password<input type="password" name="password" minlength="6" required></label><button class="btn" type="submit">Sign up</button></form></div></div>'; break;
 case '/dashboard': $dashAvatar = profile_src($user); $dashPhoto = $dashAvatar ? '<img class="dashboard-avatar" src="'.e($dashAvatar).'" alt="Profile photo of '.e($user['name']).'">' : '<div class="dashboard-avatar dashboard-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>'; $eventCards=''; foreach($events as $event) $eventCards.='<article class="card"><p class="eyebrow">Upcoming event</p><h3>'.e($event['title']).'</h3><p>'.e($event['description']).'</p><p class="muted">'.e($event['location'] ?? '').($event['event_date']?' · '.e(date('M j, Y g:i A', strtotime($event['event_date']))):'').'</p></article>'; $noticeCards=''; foreach($notifications as $notice) $noticeCards.='<article class="card"><p class="eyebrow">Notification</p><h3>'.e($notice['title']).'</h3><p>'.e($notice['message']).'</p><p class="muted">'.e(date('M j, Y', strtotime($notice['created_at']))).'</p></article>'; $content='<div class="page"><div class="dashboard-welcome">'.$dashPhoto.'<div><p class="eyebrow">Member space</p><h1>Welcome, '.e($user['name']).'</h1><p class="muted">Your profile photo appears here after you add it from your profile page.</p></div></div><div class="stats"><div class="stat"><strong>'.($user['membership']?'Active':'—').'</strong><span>Membership status</span></div><div class="stat"><strong>'.count($events).'</strong><span>Upcoming events</span></div><div class="stat"><strong>'.count($notifications).'</strong><span>Notifications</span></div></div><section class="section"><p class="eyebrow">Stay connected</p><h2>Events and updates</h2><div class="grid">'.($eventCards ?: '<article class="card"><p class="muted">No upcoming events yet.</p></article>').($noticeCards ?: '<article class="card"><p class="muted">No new notifications.</p></article>').'</div></section><div class="grid"><article class="card"><h3>Your profile</h3><p>'.e($user['email']).'</p><a class="btn" href="/profile">Edit profile</a></article><article class="card"><h3>Grow with us</h3><p>Activate your membership and join the next community experience.</p><a class="btn gold" href="/subscribe">Choose a plan</a></article></div></div>'; break;
 case '/profile': $avatar = profile_src($user); $content='<div class="page"><div class="form-card"><p class="eyebrow">Member details</p><h2>Your profile</h2><div class="avatar-picker">'.($avatar?'<img class="profile-avatar" src="'.e($avatar).'" alt="Profile photo">':'<div class="profile-placeholder">'.e(strtoupper(substr($user['name'],0,1))).'</div>').'<label class="camera-button" for="profile_image" title="Add or change profile photo" aria-label="Add or change profile photo">&#128247;</label></div><p class="photo-hint">Tap the camera icon to add or change your photo.</p><form class="form" method="post" enctype="multipart/form-data"><input type="hidden" name="action" value="profile_update"><label>Display name<input name="name" value="'.e($user['name']).'" required></label><label>Email<input value="'.e($user['email']).'" disabled></label><label>Bio<textarea name="bio" rows="4" placeholder="Tell the community about yourself"></textarea></label><input id="profile_image" class="visually-hidden" type="file" name="profile_image" accept="image/jpeg,image/png,image/webp" onchange="this.form.submit()"><button class="btn" type="submit">Save profile</button></form></div></div>'; break;
-case '/subscribe': $content='<div class="page"><p class="eyebrow">Membership</p><h1>Choose your plan.</h1><div class="grid">'; foreach($tiers as $t) $content.='<article class="card"><h3>'.e($t['name']).'</h3><h2>'.e($t['price']).'</h2><p>'.e($t['text']).'</p><form class="form" method="post"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="'.e($t['name']).'"><input type="hidden" name="amount" value="'.(int)preg_replace('/[^0-9]/','',$t['price']).'"><label>Mobile number<input name="phone" placeholder="0712345678" required></label><label>Choose payment method</label>
-<div class="payment-grid">
-    <div class="payment-option">
-        <input type="radio" name="method" value="mpesa" id="m-mpesa" checked>
-        <label for="m-mpesa">
-            <img src="'.e(app_base_path()).'/assets/payments/mpesa.png" class="payment-logo" alt="M-Pesa">
-            <span>Vodacom M-Pesa</span>
-        </label>
-    </div>
-    <div class="payment-option">
-        <input type="radio" name="method" value="tigopesa" id="m-tigo">
-        <label for="m-tigo">
-            <img src="'.e(app_base_path()).'/assets/payments/tigopesa.png" class="payment-logo" alt="Tigo Pesa">
-            <span>Tigo Pesa / Mixx</span>
-        </label>
-    </div>
-    <div class="payment-option">
-        <input type="radio" name="method" value="airtelmoney" id="m-airtel">
-        <label for="m-airtel">
-            <img src="'.e(app_base_path()).'/assets/payments/airtelmoney.png" class="payment-logo" alt="Airtel Money">
-            <span>Airtel Money</span>
-        </label>
-    </div>
-    <div class="payment-option">
-        <input type="radio" name="method" value="halopesa" id="m-halo">
-        <label for="m-halo">
-            <img src="'.e(app_base_path()).'/assets/payments/halopesa.png" class="payment-logo" alt="Halopesa">
-            <span>Halopesa</span>
-        </label>
-    </div>
-    <div class="payment-option" style="grid-column: 1 / -1">
-        <input type="radio" name="method" value="card" id="m-card">
-        <label for="m-card">
-            <span>Credit / Debit Card</span>
-            <small class="muted">Powered by ClickPesa</small>
-        </label>
-    </div>
-</div><button class="btn" type="submit">Pay and join</button></form></article>'; $content.='</div></div>'; break;
+case '/subscribe':
+    $content = '<div class="page"><p class="eyebrow">Membership</p>';
+    $qTier = trim((string)($_GET['tier'] ?? ''));
+    $qPeriod = in_array($_GET['period'] ?? 'monthly', ['monthly','yearly'], true) ? $_GET['period'] : 'monthly';
+    if ($qTier !== '') {
+        // Show focused subscribe form for the selected tier
+        $match = null; foreach ($tiers as $t) if (strcasecmp($t['name'], $qTier) === 0) { $match = $t; break; }
+        $price = $match['price'] ?? $tiers[0]['price']; $amount = (int)preg_replace('/[^0-9]/','',$price);
+        $content .= '<h1>Subscribe — '.e($qTier).'</h1><div class="card form-card"><form class="form" method="post"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier" value="'.e($qTier).'"><input type="hidden" name="amount" value="'.(int)$amount.'"><input type="hidden" name="period" value="'.e($qPeriod).'">'
+        . '<label>Your name<input name="name" value="'.e($user['name'] ?? '').'"></label>'
+        . '<label>Contact email<input type="email" name="email" value="'.e($user['email'] ?? '').'"></label>'
+        . '<label>Mobile number<input name="phone" placeholder="0712345678" required></label>'
+        . '<label>Choose payment method<select name="method"><option value="mobile">Mobile Money (ClickPesa / M-Pesa)</option><option value="card">Card checkout</option></select></label>'
+        . '<button class="btn gold" type="submit">Subscribe</button></form></div>';
+    } else {
+        // Show plan selection; links open the focused subscribe page
+        $content .= '<h1>Choose your plan.</h1><div class="grid">';
+        foreach ($tiers as $t) {
+            $price = (int)preg_replace('/[^0-9]/','',$t['price']);
+            $content .= '<article class="card"><h3>'.e($t['name']).'</h3><h2>'.e($t['price']).'</h2><p>'.e($t['text']).'</p><div class="grid"><a class="btn" href="/subscribe?tier='.urlencode($t['name']).'&period=monthly">Join — Monthly</a><a class="btn" href="/subscribe?tier='.urlencode($t['name']).'&period=yearly">Join — Yearly</a></div></article>';
+        }
+        $content .= '</div>';
+    }
+    $content .= '</div>';
+    break;
 case '/admin':
     $active = $revenue = $posts = 0; $clickReady = cp_config('CLICKPESA_CLIENT_ID') !== '' && cp_config('CLICKPESA_API_KEY') !== '';
     $tripAdmin = ''; try { ensure_community_tables(); ensure_trip_tables(); $active = (int)db()->query('SELECT COUNT(*) FROM users WHERE membership_active = 1')->fetchColumn(); $revenue = (float)db()->query("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE status = 'paid'")->fetchColumn(); $posts = (int)db()->query('SELECT COUNT(*) FROM blog_posts')->fetchColumn(); foreach (db()->query('SELECT id, title, destination, trip_date FROM trips ORDER BY created_at DESC') as $adminTrip) $tripAdmin .= '<div class="trip-admin-row"><span><strong>'.e($adminTrip['title']).'</strong><small>'.e($adminTrip['destination']).($adminTrip['trip_date']?' · '.e($adminTrip['trip_date']):'').'</small></span><span><a class="btn" href="/admin/trip-edit?id='.(int)$adminTrip['id'].'">Edit</a><form method="post" style="display:inline" onsubmit="return confirm(\'Delete this trip and its packages?\')"><input type="hidden" name="action" value="trip_delete"><input type="hidden" name="trip_id" value="'.(int)$adminTrip['id'].'"><button class="btn danger" type="submit">Delete</button></form></span></div>'; } catch (Throwable $e) {}
