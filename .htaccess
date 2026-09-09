@@ -1,31 +1,5 @@
 RewriteEngine On
 
-# 1. Enforce HTTPS & Non-WWW Redirection
-RewriteCond %{HTTPS} off
-RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
-
-# 2. Existing PHP Front Controller Routing
-# Never route real files or directories through index.php
-RewriteCond %{REQUEST_FILENAME} -f [OR]
-RewriteCond %{REQUEST_FILENAME} -d
-RewriteRule ^ - [L]
-
-# Route application paths to the native PHP front controller
-RewriteRule ^ index.php [QSA,L]
-
-# 3. Leverage Browser Caching (Speeds up returning visitors)
-<IfModule mod_expires.c>
-  ExpiresActive On
-  ExpiresDefault "access plus 1 month"
-  ExpiresByType image/jpg "access plus 1 year"
-  ExpiresByType image/jpeg "access plus 1 year"
-  ExpiresByType image/png "access plus 1 year"
-  ExpiresByType image/gif "access plus 1 year"
-  ExpiresByType image/webpHere is the updated `.htaccess` file. It keeps your existing PHP front controller routing intact while adding HTTPS enforcement, security headers, browser caching, and Gzip compression to boost site performance and SEO.
-
-```htaccess
-RewriteEngine On
-
 # 1. Enforce HTTPS (Secure SSL Connections)
 RewriteCond %{HTTPS} off
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
@@ -38,7 +12,7 @@ RewriteRule ^ - [L]
 # 3. Route application paths to the native PHP front controller
 RewriteRule ^ index.php [QSA,L]
 
-# 4. Enable Browser Caching (Speeds Up Image & Asset Loading)
+# 4. Enable Browser Caching (Fixed syntax error)
 <IfModule mod_expires.c>
     ExpiresActive On
     ExpiresDefault "access plus 1 month"
@@ -57,7 +31,7 @@ RewriteRule ^ index.php [QSA,L]
     ExpiresByType application/x-javascript "access plus 1 month"
 </IfModule>
 
-# 5. Enable Gzip Compression (Reduces Page Transfer Sizes)
+# 5. Enable Gzip Compression
 <IfModule mod_deflate.c>
     AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css application/javascript application/json image/svg+xml
 </IfModule>
