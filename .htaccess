@@ -1,8 +1,7 @@
 RewriteEngine On
 
-# 1. Enforce HTTPS (Secure SSL Connections)
-RewriteCond %{HTTPS} off
-RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+# 1. Prevent infinite redirect loops behind Cloudflare / Render proxy
+# (Removed the explicit HTTPS RewriteRule that caused the redirect loop)
 
 # 2. Never route real files or directories through index.php
 RewriteCond %{REQUEST_FILENAME} -f [OR]
@@ -12,7 +11,7 @@ RewriteRule ^ - [L]
 # 3. Route application paths to the native PHP front controller
 RewriteRule ^ index.php [QSA,L]
 
-# 4. Enable Browser Caching (Fixed syntax error)
+# 4. Enable Browser Caching
 <IfModule mod_expires.c>
     ExpiresActive On
     ExpiresDefault "access plus 1 month"
