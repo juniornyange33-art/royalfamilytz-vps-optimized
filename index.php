@@ -73,6 +73,7 @@ function ensure_donor_sponsorships_table(): void {
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
+function ensure_membership_applications_table(): void {
     db()->exec("CREATE TABLE IF NOT EXISTS membership_applications (
         id INT AUTO_INCREMENT PRIMARY KEY,
         full_name VARCHAR(150) NOT NULL,
