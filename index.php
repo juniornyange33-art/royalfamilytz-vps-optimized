@@ -7,21 +7,177 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/clickpesa.php';
 require_once __DIR__ . '/google.php';
 require_once __DIR__ . '/mailer.php';
-require_once __DIR__ . '/lib/tickets.php';
 
 const APP_NAME = 'Royal Family TZ';
-// Canonical membership plans. Each has a stable plan_id so /members and /subscribe
-// always agree on the exact tier, period, and amount — this is what gets sent to
-// ClickPesa, so the USSD/mobile-money prompt on the member's phone always matches
-// the plan they actually chose.
-$membershipPlans = [
-    'royal-monthly'  => ['id' => 'royal-monthly',  'tier' => 'Royal Family Member', 'period' => 'monthly', 'amount' => 2000,  'badge' => 'Spring Green ID 🟢'],
-    'royal-yearly'   => ['id' => 'royal-yearly',   'tier' => 'Royal Family Member', 'period' => 'yearly',  'amount' => 12000, 'badge' => 'Spring Green ID 🟢'],
-    'silver-monthly' => ['id' => 'silver-monthly', 'tier' => 'Silver Supporter',     'period' => 'monthly', 'amount' => 5000,  'badge' => 'Silver Membership ID 🥈'],
-    'silver-yearly'  => ['id' => 'silver-yearly',  'tier' => 'Silver Supporter',     'period' => 'yearly',  'amount' => 50000, 'badge' => 'Silver Membership ID 🥈'],
-    'gold-monthly'   => ['id' => 'gold-monthly',   'tier' => 'Gold Patron',          'period' => 'monthly', 'amount' => 10000, 'badge' => 'Gold Patron ID 🥇'],
-    'gold-yearly'    => ['id' => 'gold-yearly',    'tier' => 'Gold Patron',          'period' => 'yearly',  'amount' => 50000, 'badge' => 'Gold Patron ID 🥇'],
-];
+
+function tier_definitions(): array {
+    return [
+        ['key'=>'supporter', 'name'=>'Silver Member', 'monthly'=>5000,  'yearly'=>20000, 'badge'=>'Silver ID', 'badge_class'=>'badge-silver', 'badge_key'=>'silver', 'id_prefix'=>'SILVER', 'icon'=>'🥈', 'perk'=>'Membership ID card', 'text'=>'Get your official Royal Family membership ID card.'],
+        ['key'=>'patron',    'name'=>'Gold Member',   'monthly'=>null,  'yearly'=>30000, 'badge'=>'Gold ID',   'badge_class'=>'badge-gold',   'badge_key'=>'gold',   'id_prefix'=>'GOLD',   'icon'=>'🥇', 'perk'=>'T-shirt + membership ID card', 'text'=>'Get an official Royal Family T-shirt plus your membership ID card.'],
+    ];
+}
+function tier_by_key(array $tiers, string $key): ?array { foreach ($tiers as $t) if ($t['key'] === $key) return $t; return null; }
+function tier_by_name(array $tiers, string $name): ?array { foreach ($tiers as $t) if ($t['name'] === $name) return $t; return null; }
+// A stored transaction "tier" looks like "Patron (Yearly)" — strip the billing-cycle suffix to match a tier definition.
+function tier_base_name(string $storedTier): string { return trim((string)preg_replace('/\s*\([^)]*\)\s*$/', '', $storedTier)); }
+function ensure_membership_signups_table(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS membership_signups (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NULL,
+        full_name VARCHAR(150) NOT NULL,
+        email VARCHAR(150) NOT NULL,
+        phone VARCHAR(30) NOT NULL,
+        whatsapp VARCHAR(30) NULL,
+        gender VARCHAR(20) NULL,
+        city_region VARCHAR(120) NULL,
+        tier_key VARCHAR(20) NULL,
+        cycle VARCHAR(10) NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'new',
+        membership_id VARCHAR(40) NULL,
+        order_reference VARCHAR(40) NULL,
+        access_token VARCHAR(64) NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $columns = [];
+    foreach (db()->query('SHOW COLUMNS FROM membership_signups')->fetchAll() as $column) $columns[(string)$column['Field']] = true;
+    if (!isset($columns['gender'])) db()->exec('ALTER TABLE membership_signups ADD COLUMN gender VARCHAR(20) NULL');
+    if (!isset($columns['city_region'])) db()->exec('ALTER TABLE membership_signups ADD COLUMN city_region VARCHAR(120) NULL');
+}
+function ensure_donor_sponsorships_table(): void {
+    db()->exec("CREATE TABLE IF NOT EXISTS donor_sponsorships (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        full_name VARCHAR(150) NOT NULL,
+        supporter_type VARCHAR(30) NOT NULL,
+        contact_person VARCHAR(150) NULL,
+        phone VARCHAR(30) NOT NULL,
+        whatsapp VARCHAR(30) NULL,
+        email VARCHAR(150) NOT NULL,
+        location_address VARCHAR(255) NOT NULL,
+        support_types VARCHAR(255) NOT NULL,
+        support_type_other VARCHAR(150) NULL,
+        support_areas VARCHAR(255) NOT NULL,
+        support_area_other VARCHAR(150) NULL,
+        amount DECIMAL(12,2) NULL,
+        preferred_project VARCHAR(255) NULL,
+        frequency VARCHAR(30) NULL,
+        wants_partnership VARCHAR(10) NULL,
+        partnership_type VARCHAR(150) NULL,
+        partnership_expectation VARCHAR(255) NULL,
+        wants_recognition VARCHAR(10) NULL,
+        recognition_name VARCHAR(150) NULL,
+        message TEXT NULL,
+        is_financial TINYINT(1) NOT NULL DEFAULT 0,
+        status VARCHAR(20) NOT NULL DEFAULT 'new',
+        order_reference VARCHAR(40) NULL,
+        access_token VARCHAR(64) NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+    db()->exec("CREATE TABLE IF NOT EXISTS membership_applications (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        full_name VARCHAR(150) NOT NULL,
+        date_of_birth DATE NOT NULL,
+        gender VARCHAR(20) NOT NULL,
+        nationality VARCHAR(80) NOT NULL,
+        nida_number VARCHAR(60) NULL,
+        phone VARCHAR(30) NOT NULL,
+        whatsapp VARCHAR(30) NULL,
+        email VARCHAR(150) NOT NULL,
+        city_region VARCHAR(120) NOT NULL,
+        district_address VARCHAR(255) NULL,
+        category VARCHAR(30) NOT NULL,
+        occupation VARCHAR(150) NULL,
+        workplace VARCHAR(150) NULL,
+        skills VARCHAR(255) NULL,
+        emergency_name VARCHAR(150) NULL,
+        emergency_relationship VARCHAR(100) NULL,
+        emergency_phone VARCHAR(30) NULL,
+        emergency_city VARCHAR(120) NULL,
+        agreed_constitution TINYINT(1) NOT NULL DEFAULT 0,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending_payment',
+        membership_id VARCHAR(40) NULL,
+        order_reference VARCHAR(40) NULL,
+        access_token VARCHAR(64) NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+}
+function membership_category_prefix(string $category): string {
+    return match ($category) {
+        'Founder Member' => 'FOUNDER',
+        'Honorary Member' => 'HONORARY',
+        default => 'ORDINARY',
+    };
+}
+function ensure_registration_transaction_type(): void { static $done = false; if ($done) return; try { db()->exec("ALTER TABLE transactions MODIFY type ENUM('donation','subscription','trip','registration','membership_signup') NOT NULL"); } catch (Throwable $e) {} $done = true; }
+function send_membership_confirmation_email(string $orderReference): void {
+    try {
+        ensure_membership_applications_table();
+        $stmt = db()->prepare('SELECT * FROM membership_applications WHERE order_reference = ? LIMIT 1');
+        $stmt->execute([$orderReference]);
+        $app = $stmt->fetch();
+        if (!$app || !mail_configured()) return;
+        $body = "Hello {$app['full_name']},\n\n"
+            . "Congratulations — your Royal Family Foundation membership registration is confirmed.\n\n"
+            . "Membership category: {$app['category']}\n"
+            . "Membership ID: {$app['membership_id']}\n"
+            . "Registration fee (Tsh 5,000) and Annual fee (Tsh 20,000) received in full.\n\n"
+            . "Please keep this email and your Membership ID for your records and for attending Organization meetings and activities.\n\n"
+            . "\"Not Related by Blood, United by Dreams\"\nRoyal Family Foundation";
+        send_email((string)$app['email'], 'Your Royal Family Foundation membership is confirmed', $body);
+    } catch (Throwable $e) { /* Confirmation email is best-effort; registration/payment already succeeded. */ }
+} 
+function ensure_membership_badge_column(): void { static $done = false; if ($done) return; $columns = []; foreach (db()->query('SHOW COLUMNS FROM users')->fetchAll() as $column) $columns[(string)$column['Field']] = true; if (!isset($columns['membership_badge'])) db()->exec("ALTER TABLE users ADD COLUMN membership_badge VARCHAR(20) NULL"); $done = true; }
+function ensure_ticket_column(): void { static $done = false; if ($done) return; $columns = []; foreach (db()->query('SHOW COLUMNS FROM trip_bookings')->fetchAll() as $column) $columns[(string)$column['Field']] = true; if (!isset($columns['ticket_sent_at'])) db()->exec('ALTER TABLE trip_bookings ADD COLUMN ticket_sent_at DATETIME NULL'); $done = true; }
+function badge_display(?string $badgeKey): array {
+    return match ($badgeKey) {
+        'silver' => ['label' => 'Silver Member', 'icon' => '🥈', 'color' => '#8a94a6'],
+        'gold'   => ['label' => 'Gold Member', 'icon' => '🥇', 'color' => '#c9a54c'],
+        default  => ['label' => 'Member', 'icon' => '🎫', 'color' => '#285743'],
+    };
+}
+function send_membership_signup_confirmation_email(string $orderReference): void {
+    try {
+        ensure_membership_signups_table();
+        $stmt = db()->prepare('SELECT * FROM membership_signups WHERE order_reference = ? LIMIT 1');
+        $stmt->execute([$orderReference]);
+        $signup = $stmt->fetch();
+        if (!$signup || !mail_configured()) return;
+        $tier = tier_by_key(tier_definitions(), (string)$signup['tier_key']);
+        $perk = $tier['perk'] ?? 'your membership benefits';
+        $body = "Hello {$signup['full_name']},\n\n"
+            . "Congratulations — your Royal Family TZ {$tier['name']} membership payment is confirmed.\n\n"
+            . "Membership ID: {$signup['membership_id']}\n"
+            . "You will receive: {$perk}\n\n"
+            . "Please keep this email and your Membership ID for your records.\n\n"
+            . "Welcome to the family,\nRoyal Family TZ";
+        send_email((string)$signup['email'], 'Your Royal Family TZ membership is confirmed', $body);
+    } catch (Throwable $e) { /* Confirmation email is best-effort; payment already succeeded. */ }
+}
+function send_trip_ticket_email(string $orderReference): void {
+    try {
+        ensure_ticket_column();
+        $stmt = db()->prepare('SELECT b.id AS booking_id, b.guests, b.ticket_sent_at, u.name AS user_name, u.email AS user_email, u.membership_id, u.membership_badge, t.title AS trip_title, t.destination, t.trip_date, t.meeting_point, p.name AS package_name, tx.amount, tx.currency, tx.order_reference FROM trip_bookings b JOIN transactions tx ON tx.id = b.transaction_id JOIN users u ON u.id = b.user_id JOIN trips t ON t.id = b.trip_id JOIN trip_packages p ON p.id = b.package_id WHERE tx.order_reference = ? LIMIT 1');
+        $stmt->execute([$orderReference]);
+        $row = $stmt->fetch();
+        if (!$row || !empty($row['ticket_sent_at']) || !mail_configured()) return;
+        $badge = badge_display($row['membership_badge'] ?? null);
+        $dateLine = $row['trip_date'] ? date('l, F j, Y', strtotime($row['trip_date'])) : 'Date to be confirmed';
+        $body = "Hello {$row['user_name']},\n\n"
+            . "Your ticket is confirmed for {$row['trip_title']} ({$row['destination']}).\n\n"
+            . "Package: {$row['package_name']}\n"
+            . "Guests: {$row['guests']}\n"
+            . "Date: {$dateLine}\n"
+            . "Meeting point: " . ($row['meeting_point'] ?: 'To be announced') . "\n"
+            . "Amount paid: {$row['currency']} " . number_format((float)$row['amount'], 2) . "\n"
+            . "Booking reference: {$row['order_reference']}\n\n"
+            . "Membership status: {$badge['icon']} {$badge['label']}" . (!empty($row['membership_id']) ? " (ID: {$row['membership_id']})" : '') . "\n\n"
+            . "Please keep this email as your ticket and present your membership ID at check-in.\n\n"
+            . "See you there,\nRoyal Family TZ";
+        if (send_email((string)$row['user_email'], 'Your Royal Family TZ ticket — ' . $row['trip_title'], $body)) {
+            db()->prepare('UPDATE trip_bookings SET ticket_sent_at = NOW() WHERE id = ?')->execute([(int)$row['booking_id']]);
+        }
+    } catch (Throwable $e) { /* Ticket email is best-effort; booking/payment already succeeded. */ }
+}
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $path = rtrim($path, '/') ?: '/';
 $basePath = str_replace('\\', '/', dirname((string)($_SERVER['SCRIPT_NAME'] ?? '/index.php')));
@@ -44,27 +200,51 @@ if ($path === '/api/clickpesa/webhook' && $_SERVER['REQUEST_METHOD'] === 'POST')
             if ($status) {
                 db()->prepare('UPDATE transactions SET status = ?, provider_ref = COALESCE(provider_ref, ?), failure_message = ? WHERE order_reference = ?')->execute([$status, $data['id'] ?? null, $data['message'] ?? null, $reference]);
                 if ($status === 'paid') {
-                    try { ensure_profile_columns(); } catch (Throwable $ignore) {}
-                    db()->prepare('UPDATE users u JOIN transactions t ON t.user_id = u.id SET u.membership_active = IF(t.type = \'subscription\', 1, u.membership_active), u.membership_id = IF(t.type = \'subscription\' AND u.membership_id IS NULL, CONCAT(\'RFTZ-\', LPAD(u.id, 6, \'0\')), u.membership_id), u.membership_tier = IF(t.type = \'subscription\' AND t.tier IS NOT NULL, t.tier, u.membership_tier) WHERE t.order_reference = ?')->execute([$reference]);
+                    $txStmt = db()->prepare('SELECT id, user_id, type, tier FROM transactions WHERE order_reference = ? LIMIT 1');
+                    $txStmt->execute([$reference]);
+                    $tx = $txStmt->fetch();
+                    if ($tx && $tx['type'] === 'subscription' && $tx['user_id']) {
+                        ensure_membership_badge_column();
+                        $matchedTier = tier_by_name(tier_definitions(), tier_base_name((string)($tx['tier'] ?? '')));
+                        $prefix = $matchedTier['id_prefix'] ?? 'RFTZ';
+                        $badgeKey = $matchedTier['badge_key'] ?? null;
+                        db()->prepare('UPDATE users SET membership_active = 1, membership_id = COALESCE(membership_id, CONCAT(?, \'-\', LPAD(id, 6, \'0\'))), membership_badge = ? WHERE id = ?')->execute([$prefix, $badgeKey, $tx['user_id']]);
+                    }
                     try { db()->prepare('UPDATE trip_bookings b JOIN transactions t ON t.id = b.transaction_id SET b.status = \'paid\' WHERE t.order_reference = ?')->execute([$reference]); } catch (Throwable $ignore) {}
-
-                    // Send thank-you email for donations
-                    try {
-                        ensure_transaction_columns();
-                        $tx = db()->prepare('SELECT t.id,t.type,t.amount,t.currency,t.user_id,u.email FROM transactions t LEFT JOIN users u ON u.id = t.user_id WHERE t.order_reference = ? LIMIT 1');
-                        $tx->execute([$reference]); $row = $tx->fetch();
-                        if ($row && $row['type'] === 'donation' && !empty($row['email'])) {
-                            // Only send once
-                            $sentCheck = db()->prepare('SELECT thank_you_sent FROM transactions WHERE id = ? LIMIT 1'); $sentCheck->execute([$row['id']]); $sentRow = $sentCheck->fetch();
-                            if (!$sentRow || !$sentRow['thank_you_sent']) {
-                                $subject = 'Thank you for your donation to Royal Family TZ';
-                                $body = "Hello\n\nThank you for your generous donation of {$row['currency']} " . number_format((float)$row['amount']) . ". Your support helps our community projects and youth programs.\n\nWarm regards,\nRoyal Family TZ";
-                                try { send_email((string)$row['email'], $subject, $body); db()->prepare('UPDATE transactions SET thank_you_sent = 1 WHERE id = ?')->execute([$row['id']]); } catch (Throwable $mailErr) {}
+                    if ($tx && $tx['type'] === 'trip') send_trip_ticket_email($reference);
+                    if ($tx && $tx['type'] === 'registration') {
+                        ensure_membership_applications_table();
+                        $appStmt = db()->prepare('SELECT id, category, membership_id FROM membership_applications WHERE order_reference = ? LIMIT 1');
+                        $appStmt->execute([$reference]);
+                        $app = $appStmt->fetch();
+                        if ($app && empty($app['membership_id'])) {
+                            $prefix = membership_category_prefix((string)$app['category']);
+                            $membershipId = $prefix . '-' . str_pad((string)$app['id'], 6, '0', STR_PAD_LEFT);
+                            db()->prepare("UPDATE membership_applications SET status = 'paid', membership_id = ? WHERE id = ?")->execute([$membershipId, $app['id']]);
+                        }
+                        send_membership_confirmation_email($reference);
+                    }
+                    if ($tx && $tx['type'] === 'membership_signup') {
+                        ensure_membership_signups_table();
+                        $signupStmt = db()->prepare('SELECT id, user_id, tier_key, membership_id FROM membership_signups WHERE order_reference = ? LIMIT 1');
+                        $signupStmt->execute([$reference]);
+                        $signup = $signupStmt->fetch();
+                        if ($signup && empty($signup['membership_id'])) {
+                            $matchedTier = tier_by_key(tier_definitions(), (string)$signup['tier_key']);
+                            $prefix = $matchedTier['id_prefix'] ?? 'MEMBER';
+                            $membershipId = $prefix . '-' . str_pad((string)$signup['id'], 6, '0', STR_PAD_LEFT);
+                            db()->prepare("UPDATE membership_signups SET status = 'paid', membership_id = ? WHERE id = ?")->execute([$membershipId, $signup['id']]);
+                            if (!empty($signup['user_id'])) {
+                                ensure_membership_badge_column();
+                                db()->prepare('UPDATE users SET membership_active = 1, membership_id = COALESCE(membership_id, ?), membership_badge = ? WHERE id = ?')->execute([$membershipId, $matchedTier['badge_key'] ?? null, $signup['user_id']]);
                             }
                         }
-                    } catch (Throwable $ignore) {}
+                        send_membership_signup_confirmation_email($reference);
+                    }
+                    if ($tx && $tx['type'] === 'donation') {
+                        try { ensure_donor_sponsorships_table(); db()->prepare("UPDATE donor_sponsorships SET status = 'paid' WHERE order_reference = ?")->execute([$reference]); } catch (Throwable $ignore) {}
+                    }
                 }
-                        if ($status === 'paid') { try { send_trip_ticket_email($reference); } catch (Throwable $ignore) {} }
                 if ($status === 'failed') { try { db()->prepare('UPDATE trip_bookings b JOIN transactions t ON t.id = b.transaction_id SET b.status = \'cancelled\' WHERE t.order_reference = ?')->execute([$reference]); } catch (Throwable $ignore) {} }
             }
         }
@@ -84,18 +264,6 @@ if ($path === '/api/transaction-status' && $_SERVER['REQUEST_METHOD'] === 'GET')
         if (!$tx) { http_response_code(404); echo json_encode(['error' => 'Transaction not found']); exit; }
         if ($tx['status'] === 'paid' || $tx['status'] === 'failed') { if (($_SESSION['active_payment']['reference'] ?? '') === $reference) unset($_SESSION['active_payment']); } echo json_encode(['status' => $tx['status'], 'type' => $tx['type'], 'amount' => $tx['amount'], 'currency' => $tx['currency'], 'reference' => $tx['order_reference'], 'name' => $tx['user_name']]);
     } catch (Throwable $e) { http_response_code(400); echo json_encode(['error' => $e->getMessage()]); }
-    exit;
-}
-if ($path === '/api/mail-test' && $_SERVER['REQUEST_METHOD'] === 'GET') {
-    header('Content-Type: application/json; charset=utf-8');
-    try {
-        $to = trim((string)($_GET['to'] ?? '')) ?: (mail_config()['from'] ?? '');
-        if ($to === '') throw new RuntimeException('No recipient specified and no default from address configured.');
-        $subject = 'Royal Family TZ — mail diagnostics';
-        $body = "This is a test message from Royal Family TZ. If you received this, mailing is configured.\n\n" . json_encode(['time'=>date('c'),'host'=>gethostname()], JSON_PRETTY_PRINT);
-        $ok = mail_configured() && send_email($to, $subject, $body);
-        echo json_encode(['ok' => (bool)$ok, 'to' => $to, 'mail_configured' => mail_configured(), 'smtp' => array_filter(mail_config(), fn($k)=>in_array($k, ['smtp_host','smtp_port','smtp_security','from','from_name']), ARRAY_FILTER_USE_KEY)]);
-    } catch (Throwable $e) { http_response_code(500); echo json_encode(['error' => $e->getMessage()]); }
     exit;
 }
 if (in_array($path, ['/admin/report-users.csv', '/admin/report-transactions.csv'], true) && $user && $user['role'] === 'admin') {
@@ -125,92 +293,10 @@ if ($path === '/auth/google/callback') {
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
     if ($action === 'event_create' && $user && $user['role'] === 'admin') {
-        try {
-            ensure_community_tables();
-            $title = trim($_POST['title'] ?? '');
-            $description = trim($_POST['description'] ?? '');
-            $date = trim($_POST['event_date'] ?? '') ?: null;
-            $location = trim($_POST['location'] ?? '') ?: null;
-            if ($title === '' || $description === '') throw new RuntimeException('Event title and description are required.');
-            db()->prepare('INSERT INTO events (title, description, event_date, location, published) VALUES (?, ?, ?, ?, 1)')->execute([$title, $description, $date ? str_replace('T', ' ', $date) . ':00' : null, $location]);
-
-            // Also create a notification for members and deliver to their profiles and email
-            $noteTitle = 'New event: ' . $title;
-            $noteMessage = trim($description ? $description : ($location ? 'Event at ' . $location : 'New event published'));
-            db()->prepare('INSERT INTO notifications (title, message, audience) VALUES (?, ?, ?)')->execute([$noteTitle, $noteMessage, 'members']);
-            $noteId = (int)db()->lastInsertId();
-
-            // Insert user_notifications for all members and send emails if configured
-            $users = db()->query("SELECT id, email FROM users WHERE role = 'member' ORDER BY id ASC")->fetchAll(PDO::FETCH_ASSOC);
-            foreach ($users as $u) {
-                db()->prepare('INSERT INTO user_notifications (notification_id, user_id) VALUES (?, ?)')->execute([$noteId, $u['id']]);
-                if (mail_configured() && !empty($u['email'])) {
-                    try { send_email((string)$u['email'], $noteTitle, $noteMessage); db()->prepare('UPDATE user_notifications SET email_sent = 1 WHERE notification_id = ? AND user_id = ?')->execute([$noteId, $u['id']]); } catch (Throwable $mailErr) {}
-                }
-            }
-
-            $_SESSION['flash'] = 'Event published for members.';
-        } catch (Throwable $e) { $_SESSION['flash'] = 'Event could not be published: ' . $e->getMessage(); }
-        header('Location: /admin'); exit;
+        try { ensure_community_tables(); $title = trim($_POST['title'] ?? ''); $description = trim($_POST['description'] ?? ''); $date = trim($_POST['event_date'] ?? '') ?: null; $location = trim($_POST['location'] ?? '') ?: null; if ($title === '' || $description === '') throw new RuntimeException('Event title and description are required.'); db()->prepare('INSERT INTO events (title, description, event_date, location, published) VALUES (?, ?, ?, ?, 1)')->execute([$title, $description, $date ? str_replace('T', ' ', $date) . ':00' : null, $location]); $_SESSION['flash'] = 'Event published for members.'; } catch (Throwable $e) { $_SESSION['flash'] = 'Event could not be published: ' . $e->getMessage(); } header('Location: /admin'); exit;
     }
-    
     if ($action === 'notification_create' && $user && $user['role'] === 'admin') {
-        try {
-            ensure_community_tables();
-            $title = trim($_POST['title'] ?? '');
-            $message = trim($_POST['message'] ?? '');
-            $audience = in_array($_POST['audience'] ?? 'all', ['all','members','admins'], true) ? $_POST['audience'] : 'all';
-            if ($title === '' || $message === '') throw new RuntimeException('Notification title and message are required.');
-
-            db()->prepare('INSERT INTO notifications (title, message, audience) VALUES (?, ?, ?)')->execute([$title, $message, $audience]);
-            $noteId = (int)db()->lastInsertId();
-
-            // Determine recipients
-            $roleFilter = $audience === 'all' ? '' : ' WHERE role = ' . db()->quote($audience === 'admins' ? 'admin' : 'member');
-            $recipients = db()->query('SELECT id, email FROM users' . $roleFilter . ' ORDER BY id ASC')->fetchAll(PDO::FETCH_ASSOC);
-
-            $sent = 0; $emailWarning = '';
-            foreach ($recipients as $r) {
-                // insert per-user notification
-                db()->prepare('INSERT INTO user_notifications (notification_id, user_id) VALUES (?, ?)')->execute([$noteId, $r['id']]);
-                if (mail_configured() && !empty($r['email'])) {
-                    try { if (send_email((string)$r['email'], $title, $message)) $sent++; db()->prepare('UPDATE user_notifications SET email_sent = 1 WHERE notification_id = ? AND user_id = ?')->execute([$noteId, $r['id']]); } catch (Throwable $mailError) { $emailWarning = $mailError->getMessage(); }
-                }
-            }
-
-            $_SESSION['flash'] = 'Notification saved for dashboards. ' . ($sent ? $sent . ' email(s) sent.' : 'No email sent: ' . ($emailWarning ?: 'SMTP not configured') . '.');
-        } catch (Throwable $e) { $_SESSION['flash'] = 'Notification could not be sent: ' . $e->getMessage(); }
-        header('Location: /admin'); exit;
-    }
-    if ($action === 'notification_mark_read' && $user) {
-        header('Content-Type: application/json; charset=utf-8');
-        try {
-            $unId = (int)($_POST['user_notification_id'] ?? 0);
-            if (!$unId) throw new RuntimeException('Missing notification id');
-            db()->prepare('UPDATE user_notifications SET is_read = 1 WHERE id = ? AND user_id = ?')->execute([$unId, $user['id']]);
-            echo json_encode(['ok' => true]);
-        } catch (Throwable $e) {
-            http_response_code(500);
-            echo json_encode(['error' => $e->getMessage()]);
-        }
-        exit;
-    }
-    if ($action === 'notification_mark_read_index' && $user) {
-        header('Content-Type: application/json; charset=utf-8');
-        try {
-            $idx = (int)($_POST['index'] ?? -1);
-            if ($idx < 0) throw new RuntimeException('Missing index');
-            $stmt = db()->prepare('SELECT id FROM user_notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 1 OFFSET ?');
-            $stmt->execute([$user['id'], $idx]);
-            $row = $stmt->fetch();
-            if (!$row || empty($row['id'])) throw new RuntimeException('Notification not found');
-            db()->prepare('UPDATE user_notifications SET is_read = 1 WHERE id = ? AND user_id = ?')->execute([(int)$row['id'], $user['id']]);
-            echo json_encode(['ok' => true]);
-        } catch (Throwable $e) {
-            http_response_code(500);
-            echo json_encode(['error' => $e->getMessage()]);
-        }
-        exit;
+        try { ensure_community_tables(); $title = trim($_POST['title'] ?? ''); $message = trim($_POST['message'] ?? ''); $audience = in_array($_POST['audience'] ?? 'all', ['all','members','admins'], true) ? $_POST['audience'] : 'all'; if ($title === '' || $message === '') throw new RuntimeException('Notification title and message are required.'); db()->prepare('INSERT INTO notifications (title, message, audience) VALUES (?, ?, ?)')->execute([$title, $message, $audience]); $roleFilter = $audience === 'all' ? '' : ' WHERE role = ' . db()->quote($audience === 'admins' ? 'admin' : 'member'); $recipients = db()->query('SELECT email FROM users' . $roleFilter . ' ORDER BY id ASC')->fetchAll(PDO::FETCH_COLUMN); $sent = 0; $emailWarning = ''; if (mail_configured()) { foreach ($recipients as $recipient) { try { if (send_email((string)$recipient, $title, $message)) $sent++; } catch (Throwable $mailError) { $emailWarning = $mailError->getMessage(); } } } else $emailWarning = 'SMTP is not configured'; $_SESSION['flash'] = 'Notification saved for dashboards. ' . ($sent ? $sent . ' email(s) sent.' : 'No email sent: ' . $emailWarning . '. Configure SMTP in local-config.php.'); } catch (Throwable $e) { $_SESSION['flash'] = 'Notification could not be sent: ' . $e->getMessage(); } header('Location: /admin'); exit;
     }
     if (($action === 'notification_update' || $action === 'notification_delete') && $user && $user['role'] === 'admin') {
         try { ensure_community_tables(); $id = (int)($_POST['notification_id'] ?? 0); if (!$id) throw new RuntimeException('Notification ID is required.'); if ($action === 'notification_delete') { db()->prepare('DELETE FROM notifications WHERE id = ?')->execute([$id]); $_SESSION['flash'] = 'Notification deleted.'; } else { $title = trim($_POST['title'] ?? ''); $message = trim($_POST['message'] ?? ''); $audience = in_array($_POST['audience'] ?? 'all', ['all','members','admins'], true) ? $_POST['audience'] : 'all'; if ($title === '' || $message === '') throw new RuntimeException('Notification title and message are required.'); db()->prepare('UPDATE notifications SET title = ?, message = ?, audience = ? WHERE id = ?')->execute([$title, $message, $audience, $id]); $_SESSION['flash'] = 'Notification updated.'; } } catch (Throwable $e) { $_SESSION['flash'] = 'Notification could not be changed: ' . $e->getMessage(); } header('Location: /admin'); exit;
@@ -251,7 +337,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             foreach (db()->query('SHOW COLUMNS FROM users')->fetchAll() as $column) $available[(string)$column['Field']] = true;
             $required = ['id', 'name', 'email', 'password_hash'];
             foreach ($required as $column) if (!isset($available[$column])) throw new RuntimeException("The users table is missing the required column: {$column}. Import database.sql.");
-            $optional = ['membership_active', 'role', 'membership_id', 'profile_image', 'avatar_url', 'email_verified_at'];
+            $optional = ['membership_active', 'role', 'membership_id', 'membership_badge', 'profile_image', 'avatar_url', 'email_verified_at'];
             $selectColumns = array_merge($required, array_values(array_filter($optional, fn($column) => isset($available[$column]))));
             $stmt = db()->prepare('SELECT ' . implode(', ', $selectColumns) . ' FROM users WHERE email = ? LIMIT 1');
             $stmt->execute([$email]);
@@ -265,7 +351,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if ($account && password_verify($_POST['password'] ?? '', (string)$account['password_hash'])) {
                 if ($account['role'] !== 'admin' && array_key_exists('email_verified_at', $available) && empty($account['email_verified_at'])) { $_SESSION['flash'] = 'Please verify your email address before logging in. Check your inbox for the verification link.'; header('Location: ' . app_base_path() . '/login'); exit; }
-                $_SESSION['user'] = ['id' => (int)$account['id'], 'name' => $account['name'], 'email' => $account['email'], 'membership' => (bool)$account['membership_active'], 'role' => $account['role'], 'membership_id' => $account['membership_id'], 'profile_image' => $account['profile_image'] ?? null, 'avatar_url' => $account['avatar_url'] ?? null];
+                $_SESSION['user'] = ['id' => (int)$account['id'], 'name' => $account['name'], 'email' => $account['email'], 'membership' => (bool)$account['membership_active'], 'role' => $account['role'], 'membership_id' => $account['membership_id'], 'membership_badge' => $account['membership_badge'] ?? null, 'profile_image' => $account['profile_image'] ?? null, 'avatar_url' => $account['avatar_url'] ?? null];
                 header('Location: ' . app_base_path() . ($account['role'] === 'admin' ? '/admin' : '/dashboard')); exit;
             }
             $_SESSION['flash'] = 'Invalid email or password.';
@@ -289,31 +375,179 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     if ($action === 'contact') { try { ensure_contact_columns(); $name = trim($_POST['name'] ?? ''); $email = trim($_POST['email'] ?? ''); $message = trim($_POST['message'] ?? ''); if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || $message === '') throw new RuntimeException('Please provide your name, a valid email, and a message.'); db()->prepare('INSERT INTO contact_messages (name, email, message, status) VALUES (?, ?, ?, \'new\')')->execute([$name, $email, $message]); if (mail_configured()) { try { $mail = mail_config(); send_email((string)$mail['from'], 'New Contact Us message from ' . $name, "You received a new message from {$name} ({$email}):\n\n{$message}\n\nOpen your admin dashboard to reply."); } catch (Throwable $mailError) {} } $_SESSION['flash'] = 'Thanks — your message was sent. We will get back to you soon.'; } catch (Throwable $e) { $_SESSION['flash'] = 'Unable to send your message: ' . $e->getMessage(); } header('Location: /contact'); exit; }
     if ($action === 'contact_reply' && $user && $user['role'] === 'admin') { try { ensure_contact_columns(); $id = (int)($_POST['contact_id'] ?? 0); $reply = trim($_POST['reply'] ?? ''); if (!$id || $reply === '') throw new RuntimeException('A reply message is required.'); $stmt = db()->prepare('SELECT name, email FROM contact_messages WHERE id = ? LIMIT 1'); $stmt->execute([$id]); $contact = $stmt->fetch(); if (!$contact) throw new RuntimeException('Contact message not found.'); if (!mail_configured()) throw new RuntimeException('SMTP is not configured in local-config.php.'); send_email((string)$contact['email'], 'Reply from Royal Family TZ', "Hello {$contact['name']},\n\n{$reply}\n\nRegards,\nRoyal Family TZ"); db()->prepare('UPDATE contact_messages SET status = \'replied\', replied_at = NOW() WHERE id = ?')->execute([$id]); $_SESSION['flash'] = 'Reply sent to ' . $contact['email'] . '.'; } catch (Throwable $e) { $_SESSION['flash'] = 'Reply could not be sent: ' . $e->getMessage(); } header('Location: /admin'); exit; }
-    if ($action === 'donate' || $action === 'subscribe') {
+    if ($action === 'apply_membership') {
         try {
-            if (!$user && $action === 'subscribe') throw new RuntimeException('Please log in before subscribing.');
-            $tier = $_POST['tier'] ?? null;
-            if ($action === 'subscribe') {
-                // Never trust the posted amount for a subscription — look the plan back up by its
-                // plan_id so ClickPesa is always asked for the exact amount of the chosen plan,
-                // which is what shows up in the USSD/mobile-money prompt on the member's phone.
-                $chosenPlan = $membershipPlans[trim((string)($_POST['plan_id'] ?? ''))] ?? null;
-                if (!$chosenPlan) throw new RuntimeException('Please choose a membership plan from the Members page.');
-                $amount = (float)$chosenPlan['amount']; $tier = $chosenPlan['tier'];
-            } else {
-                $amount = (float)($_POST['amount'] ?? 0);
-            }
-            $method = trim($_POST['method'] ?? 'mobile'); $phone = trim($_POST['phone'] ?? ''); $type = $action === 'donate' ? 'donation' : 'subscription';
-            $pushDescription = $action === 'donate' ? 'Royal Family Foundation is waiting for your donation' : 'Royal Family Foundation is waiting for your subscription';
-            $reference = 'RF' . date('ymdHis') . strtoupper(bin2hex(random_bytes(2))); // 18 chars, within ClickPesa's 20-character limit
-            db()->prepare('INSERT INTO transactions (user_id, type, tier, amount, currency, method, status, order_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([$user['id'] ?? null, $type, $tier, $amount, 'TZS', $method, 'pending', $reference]);
-            $result = cp_start_payment($amount, $method, $phone, $reference, $user['name'] ?? trim($_POST['name'] ?? 'Donor'), $user['email'] ?? trim($_POST['email'] ?? ''), $pushDescription);
+            ensure_membership_applications_table();
+            $fullName = trim($_POST['full_name'] ?? '');
+            $dob = trim($_POST['date_of_birth'] ?? '');
+            $gender = trim($_POST['gender'] ?? '');
+            $nationality = trim($_POST['nationality'] ?? '');
+            $nida = trim($_POST['nida_number'] ?? '');
+            $phone = trim($_POST['phone'] ?? '');
+            $whatsapp = trim($_POST['whatsapp'] ?? '');
+            $email = strtolower(trim($_POST['email'] ?? ''));
+            $cityRegion = trim($_POST['city_region'] ?? '');
+            $districtAddress = trim($_POST['district_address'] ?? '');
+            $category = $_POST['category'] ?? '';
+            $occupation = trim($_POST['occupation'] ?? '');
+            $workplace = trim($_POST['workplace'] ?? '');
+            $skills = trim($_POST['skills'] ?? '');
+            $emergencyName = trim($_POST['emergency_name'] ?? '');
+            $emergencyRelationship = trim($_POST['emergency_relationship'] ?? '');
+            $emergencyPhone = trim($_POST['emergency_phone'] ?? '');
+            $emergencyCity = trim($_POST['emergency_city'] ?? '');
+            $agreed = !empty($_POST['agreed_constitution']);
+            if ($fullName === '' || $dob === '' || $gender === '' || $nationality === '' || $phone === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || $cityRegion === '') throw new RuntimeException('Please complete all required personal and contact fields.');
+            if (!in_array($category, ['Founder Member', 'Ordinary Member', 'Honorary Member'], true)) throw new RuntimeException('Please choose a membership category.');
+            if (!$agreed) throw new RuntimeException('You must agree to the Constitution & Principles to register.');
+            $birthDate = DateTime::createFromFormat('Y-m-d', $dob);
+            if (!$birthDate) throw new RuntimeException('Please provide a valid date of birth.');
+            $age = $birthDate->diff(new DateTime('today'))->y;
+            if ($age < 18) throw new RuntimeException('Membership is open to applicants 18 years and above.');
+            $accessToken = bin2hex(random_bytes(16));
+            db()->prepare('INSERT INTO membership_applications (full_name, date_of_birth, gender, nationality, nida_number, phone, whatsapp, email, city_region, district_address, category, occupation, workplace, skills, emergency_name, emergency_relationship, emergency_phone, emergency_city, agreed_constitution, access_token) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)')
+                ->execute([$fullName, $dob, $gender, $nationality, $nida ?: null, $phone, $whatsapp ?: null, $email, $cityRegion, $districtAddress ?: null, $category, $occupation ?: null, $workplace ?: null, $skills ?: null, $emergencyName ?: null, $emergencyRelationship ?: null, $emergencyPhone ?: null, $emergencyCity ?: null, $accessToken]);
+            $applicationId = (int)db()->lastInsertId();
+            header('Location: /apply-membership/pay?id=' . $applicationId . '&token=' . $accessToken); exit;
+        } catch (Throwable $e) { $_SESSION['flash'] = 'Registration could not be submitted: ' . $e->getMessage(); header('Location: /apply-membership'); exit; }
+    }
+    if ($action === 'pay_membership_fee') {
+        try {
+            ensure_membership_applications_table();
+            $applicationId = (int)($_POST['id'] ?? 0);
+            $token = (string)($_POST['token'] ?? '');
+            $stmt = db()->prepare('SELECT * FROM membership_applications WHERE id = ? AND access_token = ? LIMIT 1');
+            $stmt->execute([$applicationId, $token]);
+            $app = $stmt->fetch();
+            if (!$app) throw new RuntimeException('Registration not found. Please submit the form again.');
+            if ($app['status'] === 'paid') throw new RuntimeException('This registration is already paid and confirmed.');
+            $method = trim($_POST['method'] ?? 'mobile'); $phone = trim($_POST['phone'] ?? $app['phone']);
+            $amount = 25000.0; // Tsh 5,000 registration fee + Tsh 20,000 annual fee, fixed for every category
+            $reference = 'RG' . date('ymdHis') . strtoupper(bin2hex(random_bytes(2)));
+            ensure_registration_transaction_type();
+            db()->prepare('INSERT INTO transactions (user_id, type, tier, amount, currency, method, status, order_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([$user['id'] ?? null, 'registration', $app['category'], $amount, 'TZS', $method, 'pending', $reference]);
+            db()->prepare('UPDATE membership_applications SET order_reference = ? WHERE id = ?')->execute([$reference, $applicationId]);
+            $result = cp_start_payment($amount, $method, $phone, $reference, $app['full_name'], $app['email']);
             db()->prepare('UPDATE transactions SET provider_ref = ?, channel = ? WHERE order_reference = ?')->execute([$result['id'] ?? null, $result['channel'] ?? $method, $reference]);
-            $_SESSION['active_payment'] = ['reference' => $reference, 'type' => $type, 'name' => $user['name'] ?? trim($_POST['name'] ?? 'Donor')];
+            $_SESSION['active_payment'] = ['reference' => $reference, 'type' => 'registration', 'name' => $app['full_name']];
             if (!empty($result['checkoutLink'])) { header('Location: ' . $result['checkoutLink']); exit; }
-            $_SESSION['flash'] = $action === 'donate' ? 'Payment request sent. Approve it on your phone; we will confirm it automatically.' : 'Membership payment request sent. Approve it on your phone; we will confirm it automatically.';
-        } catch (Throwable $e) { $_SESSION['flash'] = 'Payment could not start: ' . $e->getMessage(); }
-        header('Location: /' . ($action === 'donate' ? 'donate' : 'dashboard')); exit;
+            $_SESSION['flash'] = 'Membership payment request sent. Approve it on your phone; we will confirm it automatically.';
+            header('Location: /apply-membership/pay?id=' . $applicationId . '&token=' . $token); exit;
+        } catch (Throwable $e) { $_SESSION['flash'] = 'Payment could not start: ' . $e->getMessage(); header('Location: /apply-membership/pay?id=' . (int)($_POST['id'] ?? 0) . '&token=' . urlencode((string)($_POST['token'] ?? ''))); exit; }
+    }
+
+    if ($action === 'membership_signup_start') {
+        try {
+            ensure_membership_signups_table();
+            $fullName = trim($_POST['full_name'] ?? '');
+            $email = strtolower(trim($_POST['email'] ?? ''));
+            $phone = trim($_POST['phone'] ?? '');
+            $whatsapp = trim($_POST['whatsapp'] ?? '');
+            $gender = trim($_POST['gender'] ?? '');
+            $cityRegion = trim($_POST['city_region'] ?? '');
+            $agreedTerms = ($_POST['agreed_terms'] ?? '0') === '1';
+            if ($fullName === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || $phone === '' || $gender === '' || $cityRegion === '') throw new RuntimeException('Please provide your full name, a valid email, phone, gender, and city/region.');
+            if (!$agreedTerms) throw new RuntimeException('Please agree to the Foundation Membership Terms & Conditions to continue.');
+            $accessToken = bin2hex(random_bytes(16));
+            db()->prepare('INSERT INTO membership_signups (user_id, full_name, email, phone, whatsapp, gender, city_region, access_token) VALUES (?,?,?,?,?,?,?,?)')
+                ->execute([$user['id'] ?? null, $fullName, $email, $phone, $whatsapp ?: null, $gender, $cityRegion, $accessToken]);
+            $signupId = (int)db()->lastInsertId();
+            header('Location: /membership-form/plans?id=' . $signupId . '&token=' . $accessToken); exit;
+        } catch (Throwable $e) { $_SESSION['flash'] = 'Could not continue: ' . $e->getMessage(); header('Location: /membership-form'); exit; }
+    }
+    if ($action === 'membership_signup_pay') {
+        try {
+            ensure_membership_signups_table();
+            $signupId = (int)($_POST['id'] ?? 0);
+            $token = (string)($_POST['token'] ?? '');
+            $stmt = db()->prepare('SELECT * FROM membership_signups WHERE id = ? AND access_token = ? LIMIT 1');
+            $stmt->execute([$signupId, $token]);
+            $signup = $stmt->fetch();
+            if (!$signup) throw new RuntimeException('Your form session was not found. Please start again.');
+            if ($signup['status'] === 'paid') throw new RuntimeException('This membership is already paid and confirmed.');
+            $selectedTier = tier_by_key(tier_definitions(), (string)($_POST['tier_key'] ?? ''));
+            if (!$selectedTier) throw new RuntimeException('Please choose a membership plan.');
+            $cycle = ($_POST['cycle'] ?? 'monthly') === 'yearly' ? 'yearly' : 'monthly';
+            if ($selectedTier[$cycle] === null) $cycle = 'yearly';
+            $amount = (float)$selectedTier[$cycle];
+            if (!$amount) throw new RuntimeException('That plan is not available.');
+            $method = trim($_POST['method'] ?? 'mobile'); $phone = trim($_POST['phone'] ?? $signup['phone']);
+            $reference = 'MS' . date('ymdHis') . strtoupper(bin2hex(random_bytes(2)));
+            ensure_registration_transaction_type();
+            $tierLabel = $selectedTier['name'] . ' (' . ($cycle === 'yearly' ? 'Yearly' : 'Monthly') . ')';
+            db()->prepare('INSERT INTO transactions (user_id, type, tier, amount, currency, method, status, order_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([$signup['user_id'], 'membership_signup', $tierLabel, $amount, 'TZS', $method, 'pending', $reference]);
+            db()->prepare('UPDATE membership_signups SET tier_key = ?, cycle = ?, order_reference = ? WHERE id = ?')->execute([$selectedTier['key'], $cycle, $reference, $signupId]);
+            $result = cp_start_payment($amount, $method, $phone, $reference, $signup['full_name'], $signup['email']);
+            db()->prepare('UPDATE transactions SET provider_ref = ?, channel = ? WHERE order_reference = ?')->execute([$result['id'] ?? null, $result['channel'] ?? $method, $reference]);
+            $_SESSION['active_payment'] = ['reference' => $reference, 'type' => 'membership_signup', 'name' => $signup['full_name']];
+            if (!empty($result['checkoutLink'])) { header('Location: ' . $result['checkoutLink']); exit; }
+            $_SESSION['flash'] = 'Membership payment request sent. Approve it on your phone; we will confirm it automatically.';
+            header('Location: /membership-form/plans?id=' . $signupId . '&token=' . $token); exit;
+        } catch (Throwable $e) { $_SESSION['flash'] = 'Payment could not start: ' . $e->getMessage(); header('Location: /membership-form/plans?id=' . (int)($_POST['id'] ?? 0) . '&token=' . urlencode((string)($_POST['token'] ?? ''))); exit; }
+    }
+    if ($action === 'donor_signup') {
+        try {
+            ensure_donor_sponsorships_table();
+            $fullName = trim($_POST['full_name'] ?? '');
+            $supporterType = $_POST['supporter_type'] ?? '';
+            $contactPerson = trim($_POST['contact_person'] ?? '');
+            $phone = trim($_POST['phone'] ?? '');
+            $whatsapp = trim($_POST['whatsapp'] ?? '');
+            $email = strtolower(trim($_POST['email'] ?? ''));
+            $location = trim($_POST['location_address'] ?? '');
+            $supportTypes = array_filter((array)($_POST['support_type'] ?? []));
+            $supportTypeOther = trim($_POST['support_type_other'] ?? '');
+            $supportAreas = array_filter((array)($_POST['support_area'] ?? []));
+            $supportAreaOther = trim($_POST['support_area_other'] ?? '');
+            $amount = (float)($_POST['amount'] ?? 0);
+            $preferredProject = trim($_POST['preferred_project'] ?? '');
+            $frequency = trim($_POST['frequency'] ?? '');
+            $wantsPartnership = $_POST['wants_partnership'] ?? '';
+            $partnershipType = trim($_POST['partnership_type'] ?? '');
+            $partnershipExpectation = trim($_POST['partnership_expectation'] ?? '');
+            $wantsRecognition = $_POST['wants_recognition'] ?? '';
+            $recognitionName = trim($_POST['recognition_name'] ?? '');
+            $message = trim($_POST['message'] ?? '');
+            $agreed = !empty($_POST['agreed']);
+            $agreedTerms = ($_POST['agreed_terms'] ?? '0') === '1';
+            if ($fullName === '' || $supporterType === '' || $phone === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || $location === '') throw new RuntimeException('Please complete your name, supporter type, phone, email, and location.');
+            if (!$agreedTerms) throw new RuntimeException('Please agree to the Donors & Sponsors Terms & Conditions to continue.');
+            if (empty($supportTypes)) throw new RuntimeException('Please select at least one type of support.');
+            if (empty($supportAreas)) throw new RuntimeException('Please select at least one area you would like to support.');
+            if (!$agreed) throw new RuntimeException('Please confirm the declaration to submit the form.');
+            $isFinancial = in_array('Financial Donation', $supportTypes, true) && $amount > 0;
+            if (in_array('Financial Donation', $supportTypes, true) && $amount <= 0) throw new RuntimeException('Please enter the amount you would like to give.');
+            $accessToken = bin2hex(random_bytes(16));
+            db()->prepare('INSERT INTO donor_sponsorships (full_name, supporter_type, contact_person, phone, whatsapp, email, location_address, support_types, support_type_other, support_areas, support_area_other, amount, preferred_project, frequency, wants_partnership, partnership_type, partnership_expectation, wants_recognition, recognition_name, message, is_financial, access_token) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+                ->execute([$fullName, $supporterType, $contactPerson ?: null, $phone, $whatsapp ?: null, $email, $location, implode(', ', $supportTypes), $supportTypeOther ?: null, implode(', ', $supportAreas), $supportAreaOther ?: null, $amount ?: null, $preferredProject ?: null, $frequency ?: null, $wantsPartnership ?: null, $partnershipType ?: null, $partnershipExpectation ?: null, $wantsRecognition ?: null, $recognitionName ?: null, $message ?: null, $isFinancial ? 1 : 0, $accessToken]);
+            $donorId = (int)db()->lastInsertId();
+            if ($isFinancial) { header('Location: /support/pay?id=' . $donorId . '&token=' . $accessToken); exit; }
+            header('Location: /donate?thanks=1'); exit;
+        } catch (Throwable $e) { $_SESSION['flash'] = 'Could not submit your form: ' . $e->getMessage(); header('Location: /donate'); exit; }
+    }
+    if ($action === 'pay_donor_support') {
+        try {
+            ensure_donor_sponsorships_table();
+            $donorId = (int)($_POST['id'] ?? 0);
+            $token = (string)($_POST['token'] ?? '');
+            $stmt = db()->prepare('SELECT * FROM donor_sponsorships WHERE id = ? AND access_token = ? LIMIT 1');
+            $stmt->execute([$donorId, $token]);
+            $donor = $stmt->fetch();
+            if (!$donor) throw new RuntimeException('Your form session was not found. Please submit the form again.');
+            if ($donor['status'] === 'paid') throw new RuntimeException('This contribution is already paid. Thank you!');
+            $method = trim($_POST['method'] ?? 'mobile'); $phone = trim($_POST['phone'] ?? $donor['phone']);
+            $amount = (float)$donor['amount'];
+            if (!$amount) throw new RuntimeException('No amount was recorded for this contribution.');
+            $reference = 'DN' . date('ymdHis') . strtoupper(bin2hex(random_bytes(2)));
+            db()->prepare('INSERT INTO transactions (user_id, type, tier, amount, currency, method, status, order_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([$user['id'] ?? null, 'donation', $donor['preferred_project'], $amount, 'TZS', $method, 'pending', $reference]);
+            db()->prepare('UPDATE donor_sponsorships SET order_reference = ? WHERE id = ?')->execute([$reference, $donorId]);
+            $result = cp_start_payment($amount, $method, $phone, $reference, $donor['full_name'], $donor['email']);
+            db()->prepare('UPDATE transactions SET provider_ref = ?, channel = ? WHERE order_reference = ?')->execute([$result['id'] ?? null, $result['channel'] ?? $method, $reference]);
+            $_SESSION['active_payment'] = ['reference' => $reference, 'type' => 'donation', 'name' => $donor['full_name']];
+            if (!empty($result['checkoutLink'])) { header('Location: ' . $result['checkoutLink']); exit; }
+            $_SESSION['flash'] = 'Payment request sent. Approve it on your phone; we will confirm it automatically.';
+            header('Location: /support/pay?id=' . $donorId . '&token=' . $token); exit;
+        } catch (Throwable $e) { $_SESSION['flash'] = 'Payment could not start: ' . $e->getMessage(); header('Location: /support/pay?id=' . (int)($_POST['id'] ?? 0) . '&token=' . urlencode((string)($_POST['token'] ?? ''))); exit; }
     }
 }
 
@@ -325,80 +559,17 @@ if (!$user && !in_array($path, $public, true)) { header('Location: /login'); exi
 if ($path === '/admin' && (!$user || $user['role'] !== 'admin')) { header('Location: /login'); exit; }
 
 $features = [['title'=>'Community','body'=>'Building a generous, connected community where every member can contribute and belong.'],['title'=>'Youth talent','body'=>'Creating pathways for young Tanzanians to develop their skills, confidence, and careers.'],['title'=>'Lasting impact','body'=>'Turning membership and donations into practical charity events and opportunity.']];
+$tiers = tier_definitions();
 $homeImages = ['community-01.jpg','community-04.jpg','community-06.jpg','community-08.jpg'];
 $aboutImages = ['community-02.jpg','community-03.jpg','community-05.jpg','community-07.jpg'];
 function e(string $v): string { return htmlspecialchars($v, ENT_QUOTES, 'UTF-8'); }
 function app_base_path(): string { $script = str_replace('\\', '/', (string)($_SERVER['SCRIPT_NAME'] ?? '/index.php')); $dir = str_replace('\\', '/', dirname($script)); return ($dir === '.' || $dir === '/') ? '' : rtrim($dir, '/'); }
 function gallery(array $images, string $label, string $class=''): string { $base = app_base_path(); $html='<div class="gallery '.e($class).'" data-slideshow>'; foreach($images as $i=>$image) $html.='<figure class="slide '.($i===0?'is-active':'').'" data-slide><img src="'.e($base).'/assets/community/'.e($image). '" alt="'.e($label).'" loading="'.($i===0?'eager':'lazy').'" /></figure>'; $html.='<button class="slide-prev" type="button" aria-label="Previous photo" data-prev>‹</button><button class="slide-next" type="button" aria-label="Next photo" data-next>›</button><div class="dots">'; foreach($images as $i=>$image) $html.='<button type="button" class="dot '.($i===0?'active':'').'" aria-label="Show photo '.($i+1).'" data-dot="'.$i.'"></button>'; return $html.'</div></div>'; }
-function ensure_profile_columns(): void { static $done = false; if ($done) return; $columns = []; foreach (db()->query('SHOW COLUMNS FROM users')->fetchAll() as $column) $columns[(string)$column['Field']] = true; if (!isset($columns['profile_image'])) db()->exec('ALTER TABLE users ADD COLUMN profile_image VARCHAR(255) NULL'); if (!isset($columns['bio'])) db()->exec('ALTER TABLE users ADD COLUMN bio TEXT NULL'); if (!isset($columns['email_verified_at'])) db()->exec('ALTER TABLE users ADD COLUMN email_verified_at DATETIME NULL'); if (!isset($columns['email_verification_token'])) db()->exec('ALTER TABLE users ADD COLUMN email_verification_token CHAR(64) NULL'); if (!isset($columns['email_verification_expires_at'])) db()->exec('ALTER TABLE users ADD COLUMN email_verification_expires_at DATETIME NULL'); if (!isset($columns['membership_tier'])) { try { db()->exec('ALTER TABLE users ADD COLUMN membership_tier VARCHAR(50) NULL DEFAULT "Spring Green"'); } catch (Throwable $e) {} } $done = true; }
-// Maps a stored membership_tier / transaction tier name to the badge shown to the member,
-// matching the tier names used on /members (Royal Family Member, Silver Supporter, Gold Patron).
-function membership_badge(?string $tier): array { $t = strtolower((string)$tier); if (str_contains($t, 'gold')) return ['label' => 'Gold Patron ID', 'emoji' => '🥇', 'class' => 'gold']; if (str_contains($t, 'silver')) return ['label' => 'Silver Membership ID', 'emoji' => '🥈', 'class' => 'silver']; return ['label' => 'Spring Green ID', 'emoji' => '🟢', 'class' => 'spring']; }
-
-function ensure_transaction_columns(): void {
-    static $done = false; if ($done) return; $cols = []; foreach (db()->query('SHOW COLUMNS FROM transactions')->fetchAll() as $c) $cols[(string)$c['Field']] = true; if (!isset($cols['thank_you_sent'])) db()->exec("ALTER TABLE transactions ADD COLUMN thank_you_sent TINYINT(1) NOT NULL DEFAULT 0"); $done = true;
-}
-
-function send_trip_ticket_email(string $orderRef): void {
-    try {
-        $stmt = db()->prepare("SELECT b.id AS ticket_id, u.name, u.email, u.membership_tier, u.membership_id, t.title AS trip_title, t.destination, t.trip_date, p.name AS pkg_name, tr.amount, tr.currency FROM trip_bookings b JOIN transactions tr ON tr.id = b.transaction_id JOIN users u ON u.id = b.user_id JOIN trips t ON t.id = b.trip_id JOIN trip_packages p ON p.id = b.package_id WHERE tr.order_reference = ? LIMIT 1");
-        $stmt->execute([$orderRef]);
-        $data = $stmt->fetch();
-        if (!$data || !mail_configured()) return;
-
-        $tier = $data['membership_tier'] ?? 'Spring Green';
-        $badge = (stripos($tier, 'gold') !== false) ? 'GOLD 🥇' : ((stripos($tier, 'silver') !== false) ? 'SILVER 🥈' : 'SPRING GREEN 🟢');
-
-        $subject = "Your Trip Ticket - " . $data['trip_title'] . " [" . $badge . "]";
-        $body = "Hello " . $data['name'] . ",\n\n"
-              . "Thank you for your booking! Here is your official event/trip ticket:\n\n"
-              . "--------------------------------------------------------\n"
-              . "ROYAL FAMILY TZ - OFFICIAL TRIP TICKET\n"
-              . "--------------------------------------------------------\n"
-              . "Ticket ID: TKT-" . str_pad((string)$data['ticket_id'], 6, '0', STR_PAD_LEFT) . "\n"
-              . "Passenger Name: " . $data['name'] . "\n"
-              . "Membership Status: " . $tier . " (" . ($data['membership_id'] ?? 'RFTZ-MEMBER') . ")\n"
-              . "Badge ID Tier: " . $badge . "\n\n"
-              . "Trip Event: " . $data['trip_title'] . "\n"
-              . "Destination: " . $data['destination'] . "\n"
-              . "Date: " . ($data['trip_date'] ? date('F j, Y', strtotime($data['trip_date'])) : 'To be announced') . "\n"
-              . "Package: " . $data['pkg_name'] . "\n"
-              . "Amount Paid: " . number_format((float)$data['amount']) . " " . $data['currency'] . "\n"
-              . "Payment Ref: " . $orderRef . "\n"
-              . "--------------------------------------------------------\n\n"
-              . "Please present this digital email ticket upon departure.\n\n"
-              . "Safe travels,\n"
-              . "Royal Family TZ Team";
-
-        // Attempt to generate a PDF ticket and attach
-        $ticketPdf = null;
-        try {
-            $ticketPdf = generate_ticket_pdf([
-                'ticket_id' => 'TKT-' . str_pad((string)$data['ticket_id'], 6, '0', STR_PAD_LEFT),
-                'name' => $data['name'],
-                'trip_title' => $data['trip_title'],
-                'destination' => $data['destination'],
-                'date' => $data['trip_date'] ? date('F j, Y', strtotime($data['trip_date'])) : 'TBA',
-                'package' => $data['pkg_name'],
-                'order' => $orderRef,
-            ]);
-        } catch (Throwable $e) { $ticketPdf = null; }
-
-        $attachments = [];
-        if ($ticketPdf !== null) $attachments[] = ['name'=>'ticket-'.$orderRef.'.pdf','type'=>'application/pdf','data'=>$ticketPdf];
-
-        send_email((string)$data['email'], $subject, $body, $attachments);
-    } catch (Throwable $e) {}
-}
+function ensure_profile_columns(): void { static $done = false; if ($done) return; $columns = []; foreach (db()->query('SHOW COLUMNS FROM users')->fetchAll() as $column) $columns[(string)$column['Field']] = true; if (!isset($columns['profile_image'])) db()->exec('ALTER TABLE users ADD COLUMN profile_image VARCHAR(255) NULL'); if (!isset($columns['bio'])) db()->exec('ALTER TABLE users ADD COLUMN bio TEXT NULL'); if (!isset($columns['email_verified_at'])) db()->exec('ALTER TABLE users ADD COLUMN email_verified_at DATETIME NULL'); if (!isset($columns['email_verification_token'])) db()->exec('ALTER TABLE users ADD COLUMN email_verification_token CHAR(64) NULL'); if (!isset($columns['email_verification_expires_at'])) db()->exec('ALTER TABLE users ADD COLUMN email_verification_expires_at DATETIME NULL'); $done = true; }
 function public_app_url(string $path = ''): string { $local = is_file(__DIR__.'/local-config.php') ? (require __DIR__.'/local-config.php') : []; $base = rtrim((string)($local['APP_URL'] ?? getenv('APP_URL') ?: ''), '/'); if ($base === '') { $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http'; $base = $scheme . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost') . app_base_path(); } return $base . '/' . ltrim($path, '/'); }
 function send_verification_email(array $account, string $token): bool { $link = public_app_url('/verify-email?token=' . rawurlencode($token)); $body = "Hello {$account['name']},\n\nPlease verify your Royal Family TZ email address by opening this link:\n{$link}\n\nThis link expires in 24 hours. If you did not create this account, you can ignore this email.\n\nRoyal Family TZ"; return send_email((string)$account['email'], 'Verify your Royal Family TZ email', $body); }
 function ensure_contact_columns(): void { static $done = false; if ($done) return; try { db()->exec("ALTER TABLE contact_messages ADD COLUMN status ENUM('new','replied') NOT NULL DEFAULT 'new'"); } catch (Throwable $e) {} try { db()->exec('ALTER TABLE contact_messages ADD COLUMN replied_at DATETIME NULL'); } catch (Throwable $e) {} $done = true; }
-function ensure_community_tables(): void { static $done = false; if ($done) return;
-    db()->exec("CREATE TABLE IF NOT EXISTS events (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(180) NOT NULL, description TEXT NOT NULL, event_date DATETIME NULL, location VARCHAR(180) NULL, published TINYINT(1) NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
-    db()->exec("CREATE TABLE IF NOT EXISTS notifications (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(180) NOT NULL, message TEXT NOT NULL, audience ENUM('all','members','admins') NOT NULL DEFAULT 'all', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB");
-    db()->exec("CREATE TABLE IF NOT EXISTS user_notifications (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, notification_id INT UNSIGNED NOT NULL, user_id INT UNSIGNED NOT NULL, is_read TINYINT(1) NOT NULL DEFAULT 0, email_sent TINYINT(1) NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT fk_user_notifications_notification FOREIGN KEY (notification_id) REFERENCES notifications(id) ON DELETE CASCADE, CONSTRAINT fk_user_notifications_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE) ENGINE=InnoDB");
-    $done = true; }
-
+function ensure_community_tables(): void { static $done = false; if ($done) return; db()->exec("CREATE TABLE IF NOT EXISTS events (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(180) NOT NULL, description TEXT NOT NULL, event_date DATETIME NULL, location VARCHAR(180) NULL, published TINYINT(1) NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB"); db()->exec("CREATE TABLE IF NOT EXISTS notifications (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(180) NOT NULL, message TEXT NOT NULL, audience ENUM('all','members','admins') NOT NULL DEFAULT 'all', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB"); $done = true; }
 function ensure_trip_tables(): void { static $done = false; if ($done) return; try { db()->exec("ALTER TABLE transactions MODIFY type ENUM('donation','subscription','trip') NOT NULL"); } catch (Throwable $e) {} db()->exec("CREATE TABLE IF NOT EXISTS trips (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, title VARCHAR(180) NOT NULL, slug VARCHAR(180) NOT NULL UNIQUE, description TEXT NOT NULL, destination VARCHAR(180) NOT NULL, trip_date DATE NULL, meeting_point VARCHAR(180) NULL, poster_image VARCHAR(255) NULL, published TINYINT(1) NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB"); try { db()->exec('ALTER TABLE trips ADD COLUMN poster_image VARCHAR(255) NULL'); } catch (Throwable $e) {} db()->exec("CREATE TABLE IF NOT EXISTS trip_packages (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, trip_id INT UNSIGNED NOT NULL, name VARCHAR(120) NOT NULL, description TEXT NOT NULL, price DECIMAL(12,2) NOT NULL, capacity INT UNSIGNED NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT fk_trip_packages_trip FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE) ENGINE=InnoDB"); db()->exec("CREATE TABLE IF NOT EXISTS trip_bookings (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, user_id INT UNSIGNED NOT NULL, trip_id INT UNSIGNED NOT NULL, package_id INT UNSIGNED NOT NULL, transaction_id INT UNSIGNED NULL, guests INT UNSIGNED NOT NULL DEFAULT 1, status ENUM('pending','paid','cancelled') NOT NULL DEFAULT 'pending', created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT fk_trip_bookings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE, CONSTRAINT fk_trip_bookings_trip FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE, CONSTRAINT fk_trip_bookings_package FOREIGN KEY (package_id) REFERENCES trip_packages(id) ON DELETE CASCADE, CONSTRAINT fk_trip_bookings_transaction FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE SET NULL) ENGINE=InnoDB"); $done = true; }
 function logo_url(): string { return app_base_path() . '/assets/royal-family-logo.jpg'; }
 function profile_src(?array $user): string { if (!$user) return ''; $base = app_base_path(); if (!empty($user['profile_image'])) return $base.'/uploads/profiles/'.basename($user['profile_image']); return (string)($user['avatar_url'] ?? ''); }
@@ -416,9 +587,7 @@ function layout(string $title, string $content, string $path, ?array $user, ?str
     <meta property="og:type" content="website">
     <meta name="twitter:card" content="summary_large_image">
     <link rel="icon" href="'.e(logo_url()).'" type="image/png">
-<title>'.e($title).' | '.APP_NAME.'</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet"><style>'.css().'</style><link rel="stylesheet" href="/assets/membership.css"></head><body>'; nav($path,$user); if($flash) echo '<div class="flash">'.e($flash).'</div>'; echo '<main>'.$content.'</main><div class="success-modal" data-success-modal hidden><div class="success-card"><button type="button" class="success-close" data-success-close aria-label="Close">×</button><div class="success-mark">✓</div><h2 data-success-title>Congratulations!</h2><p data-success-message></p><button type="button" class="btn gold" data-success-close>Continue</button></div></div><footer><div><strong>Royal Family TZ</strong><p>Community, youth talent, and practical impact in Tanzania.</p></div><div><strong>Find us in Arusha</strong><p>Arusha, Tanzania</p><p>Phone: <a href="tel:0774002734">0774002734</a></p><p>Email: <a href="mailto:info@royalfamilytz.org">info@royalfamilytz.org</a></p></div><div><a href="/about">About</a><a href="/contact">Contact</a><a href="/donate">Support us</a></div><p class="copyright">© '.date('Y').' Royal Family TZ</p></footer><script>document.querySelectorAll("[data-slideshow]").forEach(function(box){var slides=[...box.querySelectorAll("[data-slide]")],dots=[...box.querySelectorAll("[data-dot]")],i=0;function show(n){i=(n+slides.length)%slides.length;slides.forEach((s,k)=>s.classList.toggle("is-active",k===i));dots.forEach((d,k)=>d.classList.toggle("active",k===i));}box.querySelector("[data-prev]").onclick=()=>show(i-1);box.querySelector("[data-next]").onclick=()=>show(i+1);dots.forEach(d=>d.onclick=()=>show(Number(d.dataset.dot)));setInterval(()=>show(i+1),5000);});var toggle=document.querySelector("[data-menu-toggle]"),mobileNav=document.querySelector("[data-mobile-nav]");if(toggle&&mobileNav){toggle.onclick=function(){var open=mobileNav.classList.toggle("is-open");toggle.setAttribute("aria-expanded",open?"true":"false");toggle.textContent=open?"×":"☰";};}var modal=document.querySelector("[data-success-modal]"),closeButtons=document.querySelectorAll("[data-success-close]");closeButtons.forEach(function(b){b.onclick=function(){if(modal)modal.hidden=true;if(reloadOnClose){reloadOnClose=false;location.reload();}}});var shownPaymentReference=null,reloadOnClose=false;function showSuccess(tx){if(!modal||shownPaymentReference===tx.reference)return;shownPaymentReference=tx.reference;var title=document.querySelector("[data-success-title]"),message=document.querySelector("[data-success-message]"),name=tx.name||"you";title.textContent="Congratulations, "+name+"!";if(tx.type==="subscription")reloadOnClose=true;message.textContent=tx.type==="donation"?"Thank you for donating. May God bless you for your generosity.":tx.type==="subscription"?"Your membership payment was successful. May God bless you and welcome to Royal Family TZ.":"Your trip payment was successful. May God bless you.";modal.hidden=false;}var paymentRef='.(isset($activePayment['reference']) ? e((string)$activePayment['reference']) : '').';if(paymentRef){var tries=0;var timer=setInterval(function(){fetch("'.e(app_base_path()).'/api/transaction-status?reference="+encodeURIComponent(paymentRef),{credentials:"same-origin",cache:"no-store"}).then(r=>r.json()).then(function(tx){if(tx.status==="paid"){clearInterval(timer);showSuccess(tx);}else if(tx.status==="failed"){clearInterval(timer);}}).catch(function(){});if(++tries>60)clearInterval(timer);},3000);}</script></body></html>'; }
-echo "<script>(function(){function markRead(id,el){var payload;if(id){payload='action=notification_mark_read&user_notification_id='+encodeURIComponent(id);}else{var list=Array.from(document.querySelectorAll('.notification-card'));var idx=list.indexOf(el);if(idx===-1)return;payload='action=notification_mark_read_index&index='+encodeURIComponent(idx);}fetch('/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:payload}).then(r=>r.json()).then(function(res){if(res&&res.ok){el.classList.remove('unread');var c=document.getElementById('notifications-count');if(c)try{c.textContent=Math.max(0,parseInt(c.textContent||'0')-1);}catch(e){}}}).catch(function(){});}document.addEventListener('click',function(e){var el=e.target.closest&&e.target.closest('article.card');if(el){var ey=el.querySelector&&el.querySelector('.eyebrow');if(!(ey&&ey.textContent&&ey.textContent.trim()==='Notification'))return; if(!el.classList.contains('notification-card'))el.classList.add('notification-card');var id=el.getAttribute('data-user-notification-id');markRead(id,el);}});document.addEventListener('keydown',function(e){if(e.key==='Enter'){var el=document.activeElement;if(el){var isNotif=el.classList&&el.classList.contains('notification-card');if(!isNotif&&el.matches&&el.matches('article.card')){var ey=el.querySelector&&el.querySelector('.eyebrow');isNotif=ey&&ey.textContent&&ey.textContent.trim()==='Notification';if(isNotif&&!el.classList.contains('notification-card'))el.classList.add('notification-card');}if(isNotif){var id=el.getAttribute('data-user-notification-id');markRead(id,el);}}}});})();</script>";
-echo '<script>document.addEventListener("DOMContentLoaded", function(){ try{ var NOTIF_META = '.json_encode($notif_meta).'; var idx=0; var articles = document.querySelectorAll("article.card"); for(var i=0;i<articles.length;i++){ var a = articles[i]; var ey = a.querySelector && a.querySelector(".eyebrow"); if(!(ey && ey.textContent && ey.textContent.trim()==="Notification")) continue; var m = NOTIF_META[idx] || null; if(m){ a.setAttribute("data-user-notification-id", String(m.id)); a.classList.add("notification-card"); if(!m.is_read) a.classList.add("unread"); } idx++; } }catch(e){} });</script>';
+<title>'.e($title).' | '.APP_NAME.'</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet"><style>'.css().'</style></head><body>'; nav($path,$user); if($flash) echo '<div class="flash">'.e($flash).'</div>'; echo '<main>'.$content.'</main><div class="success-modal" data-success-modal hidden><div class="success-card"><button type="button" class="success-close" data-success-close aria-label="Close">×</button><div class="success-mark">✓</div><h2 data-success-title>Congratulations!</h2><p data-success-message></p><button type="button" class="btn gold" data-success-close>Continue</button></div></div><footer><div><strong>Royal Family TZ</strong><p>Community, youth talent, and practical impact in Tanzania.</p></div><div><strong>Find us in Arusha</strong><p>Arusha, Tanzania</p><p>Phone: <a href="tel:0774002734">0774002734</a></p><p>Email: <a href="mailto:info@royalfamilytz.org">info@royalfamilytz.org</a></p></div><div><a href="/about">About</a><a href="/contact">Contact</a><a href="/donate">Support us</a></div><p class="copyright">© '.date('Y').' Royal Family TZ</p></footer><script>document.querySelectorAll("[data-slideshow]").forEach(function(box){var slides=[...box.querySelectorAll("[data-slide]")],dots=[...box.querySelectorAll("[data-dot]")],i=0;function show(n){i=(n+slides.length)%slides.length;slides.forEach((s,k)=>s.classList.toggle("is-active",k===i));dots.forEach((d,k)=>d.classList.toggle("active",k===i));}box.querySelector("[data-prev]").onclick=()=>show(i-1);box.querySelector("[data-next]").onclick=()=>show(i+1);dots.forEach(d=>d.onclick=()=>show(Number(d.dataset.dot)));setInterval(()=>show(i+1),5000);});var toggle=document.querySelector("[data-menu-toggle]"),mobileNav=document.querySelector("[data-mobile-nav]");if(toggle&&mobileNav){toggle.onclick=function(){var open=mobileNav.classList.toggle("is-open");toggle.setAttribute("aria-expanded",open?"true":"false");toggle.textContent=open?"×":"☰";};}var modal=document.querySelector("[data-success-modal]"),closeButtons=document.querySelectorAll("[data-success-close]");closeButtons.forEach(function(b){b.onclick=function(){if(modal)modal.hidden=true;}});var shownPaymentReference=null;function showSuccess(tx){if(!modal||shownPaymentReference===tx.reference)return;shownPaymentReference=tx.reference;var title=document.querySelector("[data-success-title]"),message=document.querySelector("[data-success-message]"),name=tx.name||"you";title.textContent="Congratulations, "+name+"!";message.textContent=tx.type==="donation"?"Thank you for donating. May God bless you for your generosity.":tx.type==="subscription"||tx.type==="membership_signup"?"Your membership payment was successful. May God bless you and welcome to Royal Family TZ.":tx.type==="registration"?"Your Royal Family Foundation registration is confirmed. Welcome to the family.":tx.type==="support"?"Thank you for your generous support! Our team will reach out to arrange the details.":"Your trip payment was successful. May God bless you.";modal.hidden=false;}var paymentRef='.(isset($activePayment['reference']) ? e((string)$activePayment['reference']) : '').';if(paymentRef){var tries=0;var timer=setInterval(function(){fetch("'.e(app_base_path()).'/api/transaction-status?reference="+encodeURIComponent(paymentRef),{credentials:"same-origin",cache:"no-store"}).then(r=>r.json()).then(function(tx){if(tx.status==="paid"){clearInterval(timer);showSuccess(tx);}else if(tx.status==="failed"){clearInterval(timer);}}).catch(function(){});if(++tries>60)clearInterval(timer);},3000);}if('.(!empty($_GET['thanks']) ? 'true' : 'false').'){showSuccess({type:"support",name:"",reference:"thanks-"+Date.now()});}</script></body></html>'; }
 function css(): string { return <<<'CSS'
 :root{--ink:#17251f;--royal:#285743;--gold:#c9a54c;--paper:#f7f3e8;--muted:#66736c}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:'DM Sans',sans-serif;line-height:1.6}h1,h2,h3{font-family:Fraunces,serif;line-height:1.1;margin:0 0 18px}h1{font-size:clamp(2.5rem,6vw,5rem)}h2{font-size:clamp(2rem,4vw,3.2rem)}a{color:inherit;text-decoration:none}.nav{max-width:1180px;margin:auto;padding:22px 28px;display:flex;align-items:center;justify-content:space-between;gap:30px}.brand-logo{width:76px;height:76px;object-fit:contain;border-radius:14px;background:#fff;padding:4px;box-shadow:0 3px 12px #17382c22}.brand{display:flex;align-items:center;gap:10px;font-family:Fraunces;font-size:1.15rem;font-weight:700}.brand small{display:block;font:500 .7rem 'DM Sans';letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}.crest{display:grid;place-items:center;border:2px solid var(--gold);border-radius:50%;width:42px;height:42px;color:var(--gold);font:700 .9rem Fraunces}nav{display:flex;align-items:center;gap:20px;flex-wrap:wrap;font-size:.92rem}nav a{padding:7px 0;color:#495a51}nav a:hover,nav a.active{color:var(--royal);border-bottom:2px solid var(--gold)}.outline{border:1px solid var(--royal);border-radius:999px;padding:8px 15px!important}.hero{max-width:1180px;margin:40px auto 70px;padding:70px 28px;display:grid;grid-template-columns:1.15fr .85fr;gap:50px;align-items:center}.eyebrow{color:var(--gold);font-weight:700;letter-spacing:.13em;text-transform:uppercase;font-size:.76rem}.hero p,.lead{font-size:1.15rem;color:var(--muted);max-width:620px}.hero-art{min-height:380px;border-radius:24px;background:linear-gradient(145deg,#315e48,#15382c);display:grid;place-items:center;color:#e9d18a;font:700 5rem Fraunces;box-shadow:20px 20px 0 #e9ddc4}.google-icon{display:inline-flex;align-items:center;justify-content:center;width:1.35rem;height:1.35rem;margin-right:.45rem;border-radius:50%;background:#fff;color:#4285f4;font-weight:800;font-family:Arial,sans-serif}.btn{display:inline-block;background:var(--royal);color:#fff;border:0;border-radius:999px;padding:13px 22px;font-weight:700;cursor:pointer;margin:12px 8px 0 0}.btn.gold{background:var(--gold);color:var(--ink)}.section{max-width:1180px;margin:0 auto;padding:55px 28px}.center{text-align:center}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}.card,.form-card,.stat{background:#fffdf7;border:1px solid #e8dfcb;border-radius:18px;padding:26px;box-shadow:0 5px 20px #574a2810}.card h3{font-size:1.5rem}.card p,.muted{color:var(--muted)}.card .icon{color:var(--gold);font-size:2rem;margin-bottom:10px}.page{max-width:850px;margin:55px auto;padding:0 28px}.form-card{max-width:560px;margin:30px auto}.form{display:grid;gap:14px}.form label{font-weight:700;font-size:.9rem}.form input,.form textarea,.form select{width:100%;padding:12px 14px;border:1px solid #d9d1bf;border-radius:9px;background:#fff
 .payment-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:15px;margin:15px 0}
@@ -429,134 +598,338 @@ function css(): string { return <<<'CSS'
 .payment-logo{height:40px;width:100%;object-fit:contain;margin-bottom:8px}
 .payment-option span{font-size:.85rem;font-weight:700;color:var(--ink)}
 @media(max-width:480px){.payment-grid{grid-template-columns:1fr}}
-}.flash{max-width:1100px;margin:15px auto 0;padding:13px 18px;background:#e2f1e6;border-left:4px solid var(--royal);color:var(--royal)}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin:25px 0}.stat strong{display:block;font:700 2rem Fraunces;color:var(--royal)}.stat span{color:var(--muted);font-size:.9rem}.badge-pill{display:inline-block;font-family:'DM Sans',sans-serif;font-size:1rem;font-weight:700;padding:7px 14px;border-radius:999px;line-height:1.3}.badge-pill.spring{background:#e2f1e6;color:#1f6b3f}.badge-pill.silver{background:#eef0f2;color:#5a6472}.badge-pill.gold{background:#faf1d9;color:#8a6a17}footer{margin-top:80px;padding:40px max(28px,calc((100% - 1124px)/2));background:#16382c;color:#e8efe8;display:grid;grid-template-columns:2fr 1fr 1fr;gap:30px}footer p{color:#b5c7bc}footer a{display:block;margin-bottom:6px;color:#d6e3d8}.copyright{align-self:end;text-align:right;font-size:.8rem}.gallery{position:relative;height:clamp(280px,42vw,520px);min-height:280px;border-radius:24px;overflow:hidden;background:#173c2d;box-shadow:20px 20px 0 #e9ddc4}.gallery .slide{display:none;margin:0;height:100%}.gallery .slide.is-active{display:block;animation:fade .45s ease}.gallery img{display:block;width:100%;height:100%;object-fit:cover}.about-gallery{margin:35px 0;height:clamp(300px,48vw,560px);min-height:300px}.about-gallery .slide,.about-gallery img{min-height:0}.menu-checkbox{position:absolute;opacity:0;pointer-events:none}.menu-toggle{display:none;border:1px solid var(--royal);background:#fff;border-radius:9px;padding:7px 11px;font-size:1.35rem;color:var(--royal);cursor:pointer}.success-modal{position:fixed;inset:0;z-index:20;background:#10271dcc;display:grid;place-items:center;padding:20px}.success-modal[hidden]{display:none}.success-card{position:relative;max-width:460px;width:100%;padding:36px 28px;text-align:center;background:#fffdf7;border-radius:22px;box-shadow:0 20px 70px #0005}.success-mark{width:66px;height:66px;margin:0 auto 18px;border-radius:50%;display:grid;place-items:center;background:#e2f1e6;color:var(--royal);font-size:2.5rem;font-weight:700}.success-close{position:absolute;right:14px;top:8px;border:0;background:none;color:var(--muted);font-size:2rem;cursor:pointer}.slide-prev,.slide-next{position:absolute;top:50%;transform:translateY(-50%);border:0;border-radius:50%;width:42px;height:42px;background:#ffffffd9;color:var(--royal);font-size:2rem;line-height:1;cursor:pointer}.slide-prev{left:16px}.slide-next{right:16px}.dots{position:absolute;bottom:16px;left:0;right:0;text-align:center}.dot{width:9px;height:9px;border:0;border-radius:50%;margin:0 4px;background:#fff8;cursor:pointer}.dot.active{background:var(--gold);transform:scale(1.35)}.google-btn{display:block;text-align:center;padding:13px 18px;border:1px solid #cfcfcf;border-radius:9px;background:#fff;color:#303030;font-weight:700}.or{text-align:center;color:var(--muted);font-size:.85rem;margin:16px 0}.dashboard-welcome{display:flex;align-items:center;gap:24px;margin-bottom:28px}.admin-action{margin:18px 0}.admin-action summary{list-style:none}.admin-action summary::-webkit-details-marker{display:none}.trip-admin-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid #e8dfcb}.trip-poster{display:block;width:100%;max-height:420px;min-height:180px;object-fit:cover;border-radius:14px;margin:-4px 0 22px;border:0}.trip-poster-pdf{height:520px;background:#fff}.trip-poster-link{display:block}.trip-admin-row small{color:var(--muted);margin-left:6px}.btn.danger{background:#a44135;color:#fff}.dashboard-avatar{width:96px;height:96px;flex:0 0 96px;border-radius:50%;object-fit:cover;border:4px solid #fff;box-shadow:0 4px 18px #17382c33}.dashboard-initial{display:grid;place-items:center;background:var(--royal);color:#fff;font:700 2.8rem Fraunces}.avatar-picker{position:relative;width:128px;height:128px;margin:5px auto 4px}.avatar-picker .profile-avatar,.avatar-picker .profile-placeholder{width:128px;height:128px;margin:0}.camera-button{position:absolute;right:-2px;bottom:2px;width:42px;height:42px;display:grid;place-items:center;border:3px solid #fff;border-radius:50%;background:var(--gold);color:var(--ink);font-size:1.2rem;cursor:pointer;box-shadow:0 3px 12px #0003}.camera-button:hover{background:var(--royal);color:#fff}.photo-hint{text-align:center;color:var(--muted);font-size:.85rem;margin:0 0 22px}.visually-hidden{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}.profile-avatar,.profile-placeholder{width:110px;height:110px;border-radius:50%;object-fit:cover;margin:0 auto 22px;display:block}.profile-placeholder{display:grid;place-items:center;background:var(--royal);color:#fff;font:700 3rem Fraunces}@keyframes fade{from{opacity:.35}to{opacity:1}}@media(max-width:760px){.menu-toggle{display:block}.nav{padding:14px 18px;flex-wrap:wrap}.nav nav{display:none;width:100%;flex-direction:column;align-items:stretch;gap:3px;padding-top:8px}.nav nav.is-open{display:flex}.menu-checkbox:checked~nav[data-mobile-nav]{display:flex}.nav nav a{padding:10px 4px;border-bottom:1px solid #e8dfcb}.brand-logo{width:58px;height:58px}.hero{grid-template-columns:1fr;padding-top:25px}.hero-art,.gallery{min-height:280px}.gallery .slide,.gallery img,.about-gallery .slide,.about-gallery img{min-height:280px}.dashboard-welcome{align-items:flex-start}.grid,.stats,footer{grid-template-columns:1fr}nav{gap:11px;font-size:.8rem}.copyright{text-align:left}}
+.tier-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;align-items:stretch}
+.tier-card{background:#fffdf7;border:1px solid #e8dfcb;border-radius:18px;padding:28px 24px;box-shadow:0 5px 20px #574a2810;display:flex;flex-direction:column;align-items:flex-start;text-align:left;height:100%}
+.tier-icon{font-size:1.8rem;margin-bottom:6px}
+.tier-card h3{font-size:1.35rem;margin-bottom:8px}
+.badge-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;font-weight:700;font-size:.78rem;margin-bottom:14px;white-space:nowrap}
+.badge-spring{background:#e4f9e1;color:#1f7a3d;border:1px solid #9be8a4}
+.badge-silver{background:#eef0f2;color:#5b6470;border:1px solid #c7ccd1}
+.badge-gold{background:#fbf1d8;color:#8a6d1d;border:1px solid #e9cf7f}
+.tier-card p{margin-bottom:16px}
+.plan-options{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;margin-top:auto}
+.plan-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:12px 8px;border:2px solid #e8dfcb;border-radius:12px;background:#fff;text-align:center;transition:all .2s}
+.plan-btn:hover{border-color:var(--gold);background:#fffef0}
+.plan-btn small{color:var(--muted);font-weight:700;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em}
+.plan-btn strong{font-family:Fraunces;font-size:1.05rem;color:var(--ink)}
+.plan-summary{padding-bottom:18px;margin-bottom:18px;border-bottom:1px solid #e8dfcb}
+.plan-summary h2{margin:6px 0}
+.amount-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:6px 0 14px}
+.amount-chip{position:relative}
+.amount-chip input[type="radio"]{position:absolute;opacity:0;width:0;height:0}
+.amount-chip label{display:flex;align-items:center;justify-content:center;padding:14px 6px;border:2px solid #e8dfcb;border-radius:12px;background:#fff;cursor:pointer;font-weight:700;text-align:center;font-size:.92rem;height:100%}
+.amount-chip input:checked+label{border-color:var(--gold);background:#fffef0;box-shadow:0 4px 12px #c9a54c22}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.form-row label{width:100%}
+@media(max-width:760px){.tier-grid{grid-template-columns:1fr}.amount-grid{grid-template-columns:repeat(2,1fr)}.form-row{grid-template-columns:1fr}}
+}.flash{max-width:1100px;margin:15px auto 0;padding:13px 18px;background:#e2f1e6;border-left:4px solid var(--royal);color:var(--royal)}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin:25px 0}.stat strong{display:block;font:700 2rem Fraunces;color:var(--royal)}.stat span{color:var(--muted);font-size:.9rem}footer{margin-top:80px;padding:40px max(28px,calc((100% - 1124px)/2));background:#16382c;color:#e8efe8;display:grid;grid-template-columns:2fr 1fr 1fr;gap:30px}footer p{color:#b5c7bc}footer a{display:block;margin-bottom:6px;color:#d6e3d8}.copyright{align-self:end;text-align:right;font-size:.8rem}.gallery{position:relative;height:clamp(280px,42vw,520px);min-height:280px;border-radius:24px;overflow:hidden;background:#173c2d;box-shadow:20px 20px 0 #e9ddc4}.gallery .slide{display:none;margin:0;height:100%}.gallery .slide.is-active{display:block;animation:fade .45s ease}.gallery img{display:block;width:100%;height:100%;object-fit:cover}.about-gallery{margin:35px 0;height:clamp(300px,48vw,560px);min-height:300px}.about-gallery .slide,.about-gallery img{min-height:0}.menu-checkbox{position:absolute;opacity:0;pointer-events:none}.menu-toggle{display:none;border:1px solid var(--royal);background:#fff;border-radius:9px;padding:7px 11px;font-size:1.35rem;color:var(--royal);cursor:pointer}.success-modal{position:fixed;inset:0;z-index:20;background:#10271dcc;display:grid;place-items:center;padding:20px}.success-modal[hidden]{display:none}.success-card{position:relative;max-width:460px;width:100%;padding:36px 28px;text-align:center;background:#fffdf7;border-radius:22px;box-shadow:0 20px 70px #0005}.success-mark{width:66px;height:66px;margin:0 auto 18px;border-radius:50%;display:grid;place-items:center;background:#e2f1e6;color:var(--royal);font-size:2.5rem;font-weight:700}.success-close{position:absolute;right:14px;top:8px;border:0;background:none;color:var(--muted);font-size:2rem;cursor:pointer}.slide-prev,.slide-next{position:absolute;top:50%;transform:translateY(-50%);border:0;border-radius:50%;width:42px;height:42px;background:#ffffffd9;color:var(--royal);font-size:2rem;line-height:1;cursor:pointer}.slide-prev{left:16px}.slide-next{right:16px}.dots{position:absolute;bottom:16px;left:0;right:0;text-align:center}.dot{width:9px;height:9px;border:0;border-radius:50%;margin:0 4px;background:#fff8;cursor:pointer}.dot.active{background:var(--gold);transform:scale(1.35)}.google-btn{display:block;text-align:center;padding:13px 18px;border:1px solid #cfcfcf;border-radius:9px;background:#fff;color:#303030;font-weight:700}.or{text-align:center;color:var(--muted);font-size:.85rem;margin:16px 0}.dashboard-welcome{display:flex;align-items:center;gap:24px;margin-bottom:28px}.admin-action{margin:18px 0}.admin-action summary{list-style:none}.admin-action summary::-webkit-details-marker{display:none}.trip-admin-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid #e8dfcb}.trip-poster{display:block;width:100%;max-height:420px;min-height:180px;object-fit:cover;border-radius:14px;margin:-4px 0 22px;border:0}.trip-poster-pdf{height:520px;background:#fff}.trip-poster-link{display:block}.trip-admin-row small{color:var(--muted);margin-left:6px}.btn.danger{background:#a44135;color:#fff}.dashboard-avatar{width:96px;height:96px;flex:0 0 96px;border-radius:50%;object-fit:cover;border:4px solid #fff;box-shadow:0 4px 18px #17382c33}.dashboard-initial{display:grid;place-items:center;background:var(--royal);color:#fff;font:700 2.8rem Fraunces}.avatar-picker{position:relative;width:128px;height:128px;margin:5px auto 4px}.avatar-picker .profile-avatar,.avatar-picker .profile-placeholder{width:128px;height:128px;margin:0}.camera-button{position:absolute;right:-2px;bottom:2px;width:42px;height:42px;display:grid;place-items:center;border:3px solid #fff;border-radius:50%;background:var(--gold);color:var(--ink);font-size:1.2rem;cursor:pointer;box-shadow:0 3px 12px #0003}.camera-button:hover{background:var(--royal);color:#fff}.photo-hint{text-align:center;color:var(--muted);font-size:.85rem;margin:0 0 22px}.visually-hidden{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}.profile-avatar,.profile-placeholder{width:110px;height:110px;border-radius:50%;object-fit:cover;margin:0 auto 22px;display:block}.profile-placeholder{display:grid;place-items:center;background:var(--royal);color:#fff;font:700 3rem Fraunces}.membership-card{background:linear-gradient(135deg,#173c2d,#0f261c);border-radius:20px;padding:26px;color:#fff;box-shadow:0 10px 30px #0004;max-width:420px}.membership-card-top{margin-bottom:14px}.membership-card-body{display:flex;align-items:center;gap:16px}.membership-card-photo{width:64px;height:64px;flex:0 0 64px;border-radius:50%;object-fit:cover;border:3px solid var(--gold)}.membership-card-initial{display:grid;place-items:center;background:var(--gold);color:var(--ink);font:700 1.6rem Fraunces}.membership-card-body h3{margin:0;color:#fff}.membership-card-body p{margin:2px 0;color:#cfe0d5}.membership-card-id{font-family:monospace;letter-spacing:.05em;color:var(--gold);font-weight:700}.ticket-grid{display:grid;gap:16px}.ticket-card{display:flex;justify-content:space-between;align-items:center;gap:16px;background:#fffdf7;border:1px solid #e8dfcb;border-radius:16px;padding:20px;flex-wrap:wrap}.ticket-info{flex:1;min-width:200px}.ticket-qr{width:110px;height:110px;border-radius:8px;background:#fff;padding:6px;border:1px solid #e8dfcb}.terms-card{max-height:90vh;overflow:auto}.terms-body{max-height:280px;overflow:auto;text-align:left;font-size:.87rem;color:var(--ink);background:#faf6ea;border:1px solid #e8dfcb;border-radius:12px;padding:14px 16px;margin:14px 0}.terms-agree{display:flex;gap:10px;align-items:flex-start;font-weight:400;text-align:left;margin-bottom:14px}.terms-agree input{width:auto;margin-top:4px}@keyframes fade{from{opacity:.35}to{opacity:1}}@media(max-width:760px){.menu-toggle{display:block}.nav{padding:14px 18px;flex-wrap:wrap}.nav nav{display:none;width:100%;flex-direction:column;align-items:stretch;gap:3px;padding-top:8px}.nav nav.is-open{display:flex}.menu-checkbox:checked~nav[data-mobile-nav]{display:flex}.nav nav a{padding:10px 4px;border-bottom:1px solid #e8dfcb}.brand-logo{width:58px;height:58px}.hero{grid-template-columns:1fr;padding-top:25px}.hero-art,.gallery{min-height:280px}.gallery .slide,.gallery img,.about-gallery .slide,.about-gallery img{min-height:280px}.dashboard-welcome{align-items:flex-start}.grid,.stats,footer{grid-template-columns:1fr}nav{gap:11px;font-size:.8rem}.copyright{text-align:left}}
 CSS; }
 
 $events = []; $notifications = [];
-    if ($user) { try { ensure_community_tables(); $events = db()->query("SELECT title, description, event_date, location FROM events WHERE published = 1 ORDER BY event_date IS NULL, event_date ASC, created_at DESC LIMIT 6")->fetchAll(); $notifications = db()->prepare("SELECT n.id AS notification_id, un.id AS user_notification_id, n.title, n.message, un.is_read, n.created_at FROM user_notifications un JOIN notifications n ON n.id = un.notification_id WHERE un.user_id = ? ORDER BY n.created_at DESC LIMIT 8"); $notifications->execute([$user['id']]); $notifications = $notifications->fetchAll(); } catch (Throwable $e) {} }
-// Build a lightweight notifications metadata array for client-side initialization
-$notif_meta = [];
-if (!empty($notifications) && is_array($notifications)) {
-    foreach ($notifications as $n) {
-        $notif_meta[] = ['id' => (int)($n['user_notification_id'] ?? 0), 'is_read' => !empty($n['is_read'])];
-    }
-}
+if ($user) { try { ensure_community_tables(); $events = db()->query("SELECT title, description, event_date, location FROM events WHERE published = 1 ORDER BY event_date IS NULL, event_date ASC, created_at DESC LIMIT 6")->fetchAll(); $audienceSql = $user['role'] === 'admin' ? "('all','members','admins')" : "('all','members')"; $notifications = db()->query("SELECT title, message, created_at FROM notifications WHERE audience IN {$audienceSql} ORDER BY created_at DESC LIMIT 8")->fetchAll(); } catch (Throwable $e) {} }
 $content='';
 switch ($path) {
 case '/': $content='<section class="hero"><div><p class="eyebrow">Community • purpose • possibility</p><h1>A stronger Tanzania starts with us.</h1><p>Royal Family TZ brings people together to support community action and help young talent grow.</p><a class="btn" href="/members">Become a member</a><a class="btn gold" href="/donate">Support the mission</a></div>'.gallery($homeImages,'Royal Family TZ community','hero-gallery').'</section><section class="section"><div class="center"><p class="eyebrow">What we believe</p><h2>Community with a clear purpose.</h2></div><div class="grid">'; foreach($features as $f) $content.='<article class="card"><div class="icon">✦</div><h3>'.e($f['title']).'</h3><p>'.e($f['body']).'</p></article>'; $content.='</div></section>'; break;
 case '/about': $content='<div class="page"><p class="eyebrow">Our story</p><h1>About Royal Family TZ</h1><p class="lead">We are a Tanzanian community platform connecting people who believe that generosity, collaboration, and youth opportunity can change lives.</p>'.gallery($aboutImages,'Royal Family TZ community impact','about-gallery').'<div class="grid"><div class="card"><h3>Our Vision</h3><p>To become a trusted Tanzanian community foundation where generosity, youth talent, and practical opportunity create lasting transformation.</p></div><div class="card"><h3>Our Mission</h3><p>To create a dependable home for members, fund meaningful charity events, and build programs that let young Tanzanians discover and develop their talent.</p></div></div>'; break;
 case '/members':
-        $content = '<div class="page"><div class="center"><p class="eyebrow">Join The Family</p><h1>Become A Member</h1><p>Choose a tier that matches your commitment level and unlock exclusive digital membership IDs.</p></div>
-        <div class="membership-grid">
-            <article class="member-card spring-card">
-                <div>
-                    <span class="tier-badge badge-spring">Spring Green ID 🟢</span>
-                    <h2>Royal Family Member</h2>
-                    <p>Basic tier access for active community participants.</p>
-                    <div class="price-option">
-                        <div><strong>2,000 TZS</strong><br><small>Monthly Subscription</small></div>
-                        ' . ($user ? '<a class="btn spring" href="/subscribe?plan_id=royal-monthly">Join</a>' : '<a class="btn spring" href="/login">Join</a>') . '
-                    </div>
-                    <div class="price-option">
-                        <div><strong>12,000 TZS</strong><br><small>Yearly Subscription</small></div>
-                        ' . ($user ? '<a class="btn spring" href="/subscribe?plan_id=royal-yearly">Join</a>' : '<a class="btn spring" href="/login">Join</a>') . '
-                    </div>
-                </div>
-            </article>
-
-            <article class="member-card silver-card">
-                <div>
-                    <span class="tier-badge badge-silver">Silver Membership ID 🥈</span>
-                    <h2>Supporter</h2>
-                    <p>Dedicated supporters making a continuous monthly or annual impact.</p>
-                    <div class="price-option">
-                        <div><strong>5,000 TZS</strong><br><small>Monthly Subscription</small></div>
-                        ' . ($user ? '<a class="btn silver" href="/subscribe?plan_id=silver-monthly">Join</a>' : '<a class="btn silver" href="/login">Join</a>') . '
-                    </div>
-                    <div class="price-option">
-                        <div><strong>50,000 TZS</strong><br><small>Yearly Subscription</small></div>
-                        ' . ($user ? '<a class="btn silver" href="/subscribe?plan_id=silver-yearly">Join</a>' : '<a class="btn silver" href="/login">Join</a>') . '
-                    </div>
-                </div>
-            </article>
-
-            <article class="member-card gold-card">
-                <div>
-                    <span class="tier-badge badge-gold">Gold Patron ID 🥇</span>
-                    <h2>Patron</h2>
-                    <p>Highest status supporting major projects, trips, and development programs.</p>
-                    <div class="price-option">
-                        <div><strong>10,000 TZS</strong><br><small>Monthly Subscription</small></div>
-                        ' . ($user ? '<a class="btn gold" href="/subscribe?plan_id=gold-monthly">Join</a>' : '<a class="btn gold" href="/login">Join</a>') . '
-                    </div>
-                    <div class="price-option">
-                        <div><strong>50,000 TZS</strong><br><small>Yearly Subscription</small></div>
-                        ' . ($user ? '<a class="btn gold" href="/subscribe?plan_id=gold-yearly">Join</a>' : '<a class="btn gold" href="/login">Join</a>') . '
-                    </div>
-                </div>
-            </article>
-        </div></div>';
+    $tierCards = '';
+    foreach ($tiers as $t) {
+        $priceRow = $t['monthly'] !== null
+            ? '<div class="plan-options"><div class="plan-btn" style="pointer-events:none"><small>Monthly</small><strong>TZS '.number_format($t['monthly']).'</strong></div><div class="plan-btn" style="pointer-events:none"><small>Yearly</small><strong>TZS '.number_format($t['yearly']).'</strong></div></div>'
+            : '<div class="plan-options"><div class="plan-btn" style="pointer-events:none;grid-column:1 / -1"><small>Yearly only</small><strong>TZS '.number_format($t['yearly']).'</strong></div></div>';
+        $tierCards .= '<article class="tier-card"><div class="tier-icon">'.$t['icon'].'</div><h3>'.e($t['name']).'</h3><span class="badge-chip '.e($t['badge_class']).'">'.$t['icon'].' '.e($t['badge']).'</span><p class="muted">You get: '.e($t['perk']).'</p>'.$priceRow.'</article>';
+    }
+    $content='<div class="page members-page"><p class="eyebrow">Join the movement</p><h1>Become a member.</h1><p class="lead">Every membership helps fund community events and youth-talent opportunities.</p><div class="tier-grid">'.$tierCards.'</div><div style="text-align:center;margin-top:24px"><a class="btn gold" href="/membership-form">Become a member</a></div><div class="card" style="margin-top:32px"><h3>Official Foundation registration</h3><p class="muted">Prefer to register as a formal Royal Family Foundation member (Founder, Ordinary, or Honorary) under our Constitution? This is a one-time Tsh 5,000 registration fee plus a Tsh 20,000 annual fee.</p><a class="btn" href="/apply-membership">Start official registration</a></div></div>';
+    break;
+case '/membership-form':
+    $content = '<div class="success-modal" id="membership-terms-modal"><div class="success-card terms-card"><h2>Foundation Membership Terms & Conditions</h2><div class="terms-body">'
+        . '<p>By becoming a Royal Family TZ member, you agree to the following:</p>'
+        . '<p>1. Membership fees (monthly or yearly, depending on your chosen tier) are used to fund community events, youth-talent programs, and Organization operations, and are non-refundable once payment is confirmed.</p>'
+        . '<p>2. Your membership ID card (Silver tier) or T-shirt and ID card (Gold tier) will be issued once your payment has been confirmed by our payment provider.</p>'
+        . '<p>3. Membership benefits are personal to you and may not be transferred to another person.</p>'
+        . '<p>4. You agree to conduct yourself respectfully at all Royal Family TZ events and community activities.</p>'
+        . '<p>5. Royal Family TZ may update membership benefits or pricing from time to time; continuing members will be notified of material changes.</p>'
+        . '<p>6. The information you provide in this form is accurate to the best of your knowledge, and will be used solely for membership administration and communication.</p>'
+        . '</div><label class="terms-agree"><input type="checkbox" id="membership-terms-agree">I have read and agree to the Foundation Membership Terms & Conditions.</label><button type="button" class="btn gold" id="membership-terms-continue" disabled style="width:100%">Continue</button></div></div>'
+        . '<script>(function(){var agree=document.getElementById("membership-terms-agree"),cont=document.getElementById("membership-terms-continue"),modal=document.getElementById("membership-terms-modal");agree.addEventListener("change",function(){cont.disabled=!agree.checked;});cont.addEventListener("click",function(){modal.hidden=true;var field=document.getElementById("agreed_terms_field");if(field)field.value="1";});})();</script>'
+        . '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>Become a member</h1><p class="lead">Tell us who you are, then choose your Silver or Gold membership plan.</p><div class="form-card"><form class="form" method="post"><input type="hidden" name="action" value="membership_signup_start"><input type="hidden" id="agreed_terms_field" name="agreed_terms" value="0"><label>Full name<input name="full_name" value="'.e($user['name'] ?? '').'" required></label><label>Email address<input type="email" name="email" value="'.e($user['email'] ?? '').'" required></label><div class="form-row"><label>Phone number<input name="phone" placeholder="0712345678" required></label><label>WhatsApp number<input name="whatsapp" placeholder="0712345678"></label></div><div class="form-row"><label>Gender<select name="gender" required><option value="">Select</option><option>Male</option><option>Female</option></select></label><label>City / region<input name="city_region" placeholder="e.g. Arusha" required></label></div><button class="btn gold" type="submit">Continue to plans</button></form></div></div>';
+    break;
+case '/membership-form/plans':
+    ensure_membership_signups_table();
+    $signupId = (int)($_GET['id'] ?? 0);
+    $signupToken = (string)($_GET['token'] ?? '');
+    $signupStmt = db()->prepare('SELECT * FROM membership_signups WHERE id = ? AND access_token = ? LIMIT 1');
+    $signupStmt->execute([$signupId, $signupToken]);
+    $signupRow = $signupStmt->fetch();
+    if (!$signupRow) { $content = '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>Session not found.</h1><p class="lead">Please fill in the membership form again.</p><a class="btn" href="/membership-form">Back to form</a></div>'; break; }
+    if ($signupRow['status'] === 'paid') {
+        $paidTier = tier_by_key($tiers, (string)$signupRow['tier_key']);
+        $content = '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>You are already a member!</h1><p class="lead">Thank you, '.e($signupRow['full_name']).'. Your '.e($paidTier['name'] ?? 'membership').' is confirmed.</p><p><strong>Membership ID:</strong> '.e($signupRow['membership_id']).'</p></div>';
         break;
-case '/donate':
-    // Simplified donate UI: only phone, amount, donate button. Show success message if recent payment completed.
-    $content = '<div class="page"><div class="center"><p class="eyebrow">Support the mission</p><h1>Donate to Royal Family TZ</h1><p class="lead">Your gift helps fund community projects, youth talent development, and events.</p></div>';
-
-    // If the user has an active payment in session and it is now paid, show thank you
-    $showThanks = false; $paidAmount = 0;
-    if (!empty($activePayment['reference'])) {
-        try {
-            $stmt = db()->prepare('SELECT status, amount FROM transactions WHERE order_reference = ? LIMIT 1'); $stmt->execute([$activePayment['reference']]); $tx = $stmt->fetch();
-            if ($tx && $tx['status'] === 'paid') { $showThanks = true; $paidAmount = (float)$tx['amount']; unset($_SESSION['active_payment']); }
-        } catch (Throwable $e) {}
     }
-
-    if ($showThanks) {
-        $content .= '<div class="card"><h2>Thank you!</h2><p class="lead">We received your donation of TZS '.number_format($paidAmount).'. A receipt has been sent to your email if provided.</p><a class="btn" href="/">Return home</a></div>';
+    $planCards = '';
+    foreach ($tiers as $t) {
+        $cycleOptions = $t['monthly'] !== null
+            ? '<div class="plan-options"><button type="submit" name="cycle" value="monthly" class="plan-btn"><small>Monthly</small><strong>TZS '.number_format($t['monthly']).'</strong></button><button type="submit" name="cycle" value="yearly" class="plan-btn"><small>Yearly</small><strong>TZS '.number_format($t['yearly']).'</strong></button></div>'
+            : '<div class="plan-options"><button type="submit" name="cycle" value="yearly" class="plan-btn" style="grid-column:1 / -1"><small>Yearly only</small><strong>TZS '.number_format($t['yearly']).'</strong></button></div>';
+        $planCards .= '<article class="tier-card"><div class="tier-icon">'.$t['icon'].'</div><h3>'.e($t['name']).'</h3><span class="badge-chip '.e($t['badge_class']).'">'.$t['icon'].' '.e($t['badge']).'</span><p class="muted">You get: '.e($t['perk']).'</p><form method="post">'
+            . '<input type="hidden" name="action" value="membership_signup_pay"><input type="hidden" name="id" value="'.$signupId.'"><input type="hidden" name="token" value="'.e($signupToken).'"><input type="hidden" name="tier_key" value="'.e($t['key']).'"><input type="hidden" name="phone" value="'.e($signupRow['phone']).'"><label style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Payment method<select name="method" style="width:100%;padding:10px;border:1px solid #d9d1bf;border-radius:9px;margin:6px 0 12px"><option value="mpesa">Vodacom M-Pesa</option><option value="tigopesa">Tigo Pesa / Mixx</option><option value="airtelmoney">Airtel Money</option><option value="halopesa">Halopesa</option><option value="card">Credit / Debit Card</option></select></label>'
+            . $cycleOptions . '</form></article>';
     }
-
-    $content .= '<div class="card form-card"><form class="form" method="post"><input type="hidden" name="action" value="donate"><label>Mobile number<input name="phone" placeholder="0712345678" required></label><label>Amount (TZS)<input type="number" name="amount" min="1" required></label><button class="btn gold" type="submit">Donate now</button></form></div></div>';
+    $content = '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>Choose your plan, '.e($signupRow['full_name']).'</h1><p class="lead">Pick Silver or Gold, and monthly or yearly billing. You will confirm your mobile money payment next.</p><div class="tier-grid">'.$planCards.'</div></div>';
+    break;
+case '/apply-membership':
+    $content = '<div class="page"><p class="eyebrow">Royal Family Foundation</p><h1>Official membership registration</h1><p class="lead">"Not Related by Blood, United by Dreams" — complete this form to register as a Founder, Ordinary, or Honorary member. A Tsh 5,000 registration fee and Tsh 20,000 annual fee apply to every category.</p><div class="form-card"><form class="form" method="post"><input type="hidden" name="action" value="apply_membership">'
+        . '<h3>A. Personal information (must be 18 years or above)</h3>'
+        . '<div class="form-row"><label>Full legal name (first, middle, surname)<input name="full_name" required></label><label>Date of birth<input type="date" name="date_of_birth" required></label></div>'
+        . '<div class="form-row"><label>Gender<select name="gender" required><option value="">Select</option><option>Male</option><option>Female</option></select></label><label>Nationality<input name="nationality" required></label></div>'
+        . '<label>NIDA / ID number<input name="nida_number"></label>'
+        . '<h3>B. Contact details & location</h3>'
+        . '<div class="form-row"><label>Phone number (primary)<input name="phone" placeholder="0712345678" required></label><label>WhatsApp number<input name="whatsapp" placeholder="0712345678"></label></div>'
+        . '<div class="form-row"><label>Email address<input type="email" name="email" required></label><label>City / region of residence<input name="city_region" required></label></div>'
+        . '<label>District & street / ward address<input name="district_address"></label>'
+        . '<h3>C. Membership category</h3>'
+        . '<div class="amount-grid"><div class="amount-chip"><input type="radio" name="category" value="Founder Member" id="cat-founder" required><label for="cat-founder">Founder Member</label></div><div class="amount-chip"><input type="radio" name="category" value="Ordinary Member" id="cat-ordinary"><label for="cat-ordinary">Ordinary Member</label></div><div class="amount-chip"><input type="radio" name="category" value="Honorary Member" id="cat-honorary"><label for="cat-honorary">Honorary Member</label></div></div>'
+        . '<label>Current occupation / profession<input name="occupation"></label>'
+        . '<label>Institution / workplace / business<input name="workplace"></label>'
+        . '<label>Key skills / profession / talents (e.g. media, digital innovation, IT, leadership)<input name="skills"></label>'
+        . '<h3>D. Emergency contact information</h3>'
+        . '<div class="form-row"><label>Emergency contact person name<input name="emergency_name"></label><label>Relationship to applicant<input name="emergency_relationship"></label></div>'
+        . '<div class="form-row"><label>Phone number<input name="emergency_phone"></label><label>City / residence<input name="emergency_city"></label></div>'
+        . '<h3>E. Member declaration & commitment</h3>'
+        . '<label style="display:flex;align-items:flex-start;gap:10px;font-weight:400"><input type="checkbox" name="agreed_constitution" value="1" required style="width:auto;margin-top:4px">I confirm I am 18 years of age or older and of sound mind, that all information provided is accurate, and I have read and agree to uphold the Vision, Mission, Objectives, and Constitution of the Royal Family Foundation, including the Registration Fee (Tsh 5,000) and Annual Fee (Tsh 20,000).</label>'
+        . '<button class="btn gold" type="submit">Submit registration</button></form></div></div>';
+    break;
+case '/apply-membership/pay':
+    ensure_membership_applications_table();
+    $applicationId = (int)($_GET['id'] ?? 0);
+    $accessToken = (string)($_GET['token'] ?? '');
+    $appStmt = db()->prepare('SELECT * FROM membership_applications WHERE id = ? AND access_token = ? LIMIT 1');
+    $appStmt->execute([$applicationId, $accessToken]);
+    $application = $appStmt->fetch();
+    if (!$application) { $content = '<div class="page"><p class="eyebrow">Royal Family Foundation</p><h1>Registration not found.</h1><p class="lead">Please submit the registration form again.</p><a class="btn" href="/apply-membership">Back to registration</a></div>'; break; }
+    if ($application['status'] === 'paid') {
+        $content = '<div class="page"><p class="eyebrow">Royal Family Foundation</p><h1>You are already a member!</h1><p class="lead">Thank you, '.e($application['full_name']).'. Your '.e($application['category']).' registration is confirmed.</p><p><strong>Membership ID:</strong> '.e($application['membership_id']).'</p></div>';
+        break;
+    }
+    $content = '<div class="page"><p class="eyebrow">Royal Family Foundation</p><h1>Confirm and pay</h1><div class="form-card"><div class="plan-summary"><h2>'.e($application['full_name']).'</h2><p class="muted">Category: '.e($application['category']).'</p><p class="muted">Registration fee: TZS 5,000 &nbsp;+&nbsp; Annual fee: TZS 20,000 &nbsp;=&nbsp; <strong>Total TZS 25,000</strong></p></div><form class="form" method="post" data-payment-reference="'.e((string)($application['order_reference'] ?? '')).'"><input type="hidden" name="action" value="pay_membership_fee"><input type="hidden" name="id" value="'.(int)$application['id'].'"><input type="hidden" name="token" value="'.e($accessToken).'"><label>Mobile number<input name="phone" value="'.e($application['phone']).'" placeholder="0712345678" required></label><label>Choose payment method</label>
+<div class="payment-grid">
+    <div class="payment-option">
+        <input type="radio" name="method" value="mpesa" id="m-mpesa" checked>
+        <label for="m-mpesa">
+            <img src="'.e(app_base_path()).'/assets/payments/mpesa.png" class="payment-logo" alt="M-Pesa">
+            <span>Vodacom M-Pesa</span>
+        </label>
+    </div>
+    <div class="payment-option">
+        <input type="radio" name="method" value="tigopesa" id="m-tigo">
+        <label for="m-tigo">
+            <img src="'.e(app_base_path()).'/assets/payments/tigopesa.png" class="payment-logo" alt="Tigo Pesa">
+            <span>Tigo Pesa / Mixx</span>
+        </label>
+    </div>
+    <div class="payment-option">
+        <input type="radio" name="method" value="airtelmoney" id="m-airtel">
+        <label for="m-airtel">
+            <img src="'.e(app_base_path()).'/assets/payments/airtelmoney.png" class="payment-logo" alt="Airtel Money">
+            <span>Airtel Money</span>
+        </label>
+    </div>
+    <div class="payment-option">
+        <input type="radio" name="method" value="halopesa" id="m-halo">
+        <label for="m-halo">
+            <img src="'.e(app_base_path()).'/assets/payments/halopesa.png" class="payment-logo" alt="Halopesa">
+            <span>Halopesa</span>
+        </label>
+    </div>
+    <div class="payment-option" style="grid-column: 1 / -1">
+        <input type="radio" name="method" value="card" id="m-card">
+        <label for="m-card">
+            <span>Credit / Debit Card</span>
+            <small class="muted">Powered by ClickPesa</small>
+        </label>
+    </div>
+</div><button class="btn gold" type="submit">Pay TZS 25,000</button></form></div></div>';
     break;
 	case '/trips': $tripCards=''; try { ensure_trip_tables(); $tripRows=db()->query('SELECT id, title, description, destination, trip_date, meeting_point, poster_image FROM trips WHERE published = 1 ORDER BY trip_date IS NULL, trip_date ASC, created_at DESC')->fetchAll(); foreach($tripRows as $trip) { $ps=db()->prepare('SELECT id, name, description, price, capacity FROM trip_packages WHERE trip_id = ? ORDER BY price ASC'); $ps->execute([$trip['id']]); $packages=$ps->fetchAll(); $packageHtml=''; foreach($packages as $package) $packageHtml.='<article class="card"><h3>'.e($package['name']).'</h3><h2>TZS '.number_format((float)$package['price']).'</h2><p>'.e($package['description']).'</p><p class="muted">'.($package['capacity']?'Limited places: '.e((string)$package['capacity']):'Open places').'</p>'.($user?'<form class="form" method="post"><input type="hidden" name="action" value="trip_book"><input type="hidden" name="trip_id" value="'.(int)$trip['id'].'"><input type="hidden" name="package_id" value="'.(int)$package['id'].'"><label>Guests<input type="number" name="guests" min="1" value="1" required></label><label>Mobile number<input name="phone" placeholder="0712345678" required></label><label>Payment method<select name="method"><option value="mobile">Mobile Money</option><option value="card">Card checkout</option></select></label><button class="btn gold" type="submit">Book and pay</button></form>':'<a class="btn" href="/login">Log in to book</a>').'</article>'; $poster = trip_poster_markup($trip['poster_image'] ?? null, (string)$trip['title']); $tripCards.='<section class="card">'.$poster.'<p class="eyebrow">'.e($trip['destination']).'</p><h2>'.e($trip['title']).'</h2><p>'.e($trip['description']).'</p><p class="muted">'.($trip['trip_date']?'Date: '.e(date('M j, Y', strtotime($trip['trip_date']))).' · ':'').e($trip['meeting_point'] ?? '').'</p><div class="grid">'.$packageHtml.'</div></section>'; } } catch (Throwable $e) { $tripCards='<div class="card"><p>Trips are not available yet. Please check the database setup.</p></div>'; } $content='<div class="page"><p class="eyebrow">Travel together</p><h1>Community trips</h1><p class="lead">Choose a trip package, enter your phone number, and pay securely through ClickPesa.</p>'.$tripCards.'</div>'; break;
 case '/blog': $content='<div class="page"><p class="eyebrow">Stories and updates</p><h1>Blog & videos</h1><p class="lead">Ideas, events, and stories from the Royal Family TZ community.</p><div class="card youtube-card"><div class="youtube-mark">YouTube</div><h3>Watch Royal Family TZ</h3><p class="muted">Follow our community stories, charity activities, youth talent, and events on the official Royal Family TZ media channel.</p><a class="btn gold" href="https://youtube.com/@royalfamilytz-media?si=BcIVW6FbDE4sa9A3" target="_blank" rel="noopener noreferrer">Visit our YouTube channel</a><a class="btn" href="https://www.instagram.com/royalfamilytz?igsh=czZoaXV2OTIwbjVy" target="_blank" rel="noopener noreferrer">Follow us on Instagram</a><a class="btn" href="https://www.tiktok.com/@royalfamilytz?_r=1&amp;_t=ZS-98wVB63J0Sq" target="_blank" rel="noopener noreferrer">Follow us on TikTok</a></div><div class="card"><h3>Welcome to Royal Family TZ</h3><p class="muted">Our latest stories are coming soon. Check back for community news, charity events, and youth talent features.</p></div></div>'; break;
-case '/contact': $content='<div class="page"><p class="eyebrow">We would love to hear from you</p><h1>Contact us</h1><div class="form-card"><form class="form" method="post"><input type="hidden" name="action" value="contact"><label>Name<input name="name" required></label><label>Email<input type="email" name="email" required></label><label>Message<textarea name="message" rows="5" required></textarea></label><button class="btn" type="submit">Send message</button></form></div></div>'; break;
+case '/contact': $content='<div class="page"><p class="eyebrow">We would love to hear from you</p><h1>Contact us</h1><div class="form-card"><form class="form" method="post"><input type="hidden" name="action" value="contact"><div class="form-row"><label>Name<input name="name" required></label><label>Email<input type="email" name="email" required></label></div><label>Message<textarea name="message" rows="5" required></textarea></label><button class="btn" type="submit">Send message</button></form></div></div>'; break;
+case '/donate':
+    $content = '<div class="success-modal" id="donor-terms-modal"><div class="success-card terms-card"><h2>Donors & Sponsors Terms & Conditions</h2><div class="terms-body">'
+        . '<p>By submitting this form, you agree to the following:</p>'
+        . '<p>1. Financial donations are used to support Royal Family Foundation charity events, youth-talent, and community programs, and are non-refundable once processed.</p>'
+        . '<p>2. If you offer equipment, materials, professional skills, or another in-kind contribution, our team will contact you by phone or email to arrange collection or delivery details.</p>'
+        . '<p>3. Any partnership or sponsorship arrangement discussed through this form is not binding until confirmed in writing by Royal Family Foundation.</p>'
+        . '<p>4. If you choose to be recognized as a supporter, your name or organization name may be published on our website or at community events, using the recognition name you provide.</p>'
+        . '<p>5. The information you provide is accurate to the best of your knowledge, and will be used solely to process your contribution and for related communication.</p>'
+        . '</div><label class="terms-agree"><input type="checkbox" id="donor-terms-agree">I have read and agree to the Donors & Sponsors Terms & Conditions.</label><button type="button" class="btn gold" id="donor-terms-continue" disabled style="width:100%">Continue</button></div></div>'
+        . '<script>(function(){var agree=document.getElementById("donor-terms-agree"),cont=document.getElementById("donor-terms-continue"),modal=document.getElementById("donor-terms-modal");agree.addEventListener("change",function(){cont.disabled=!agree.checked;});cont.addEventListener("click",function(){modal.hidden=true;var field=document.getElementById("donor_agreed_terms_field");if(field)field.value="1";});})();</script>'
+        . '<div class="page"><p class="eyebrow">"Your presence can change a life."</p><h1>Donor & Sponsorship Registration</h1><p class="lead">Support Royal Family Foundation with a financial gift, equipment, expertise, or a partnership — tell us how you would like to help.</p><div class="form-card"><form class="form" method="post"><input type="hidden" name="action" value="donor_signup"><input type="hidden" id="donor_agreed_terms_field" name="agreed_terms" value="0">'
+        . '<h3>A. Donor / sponsor information</h3>'
+        . '<label>Full name / organization name<input name="full_name" required></label>'
+        . '<label style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Type of supporter</label><div class="amount-grid"><div class="amount-chip"><input type="radio" name="supporter_type" value="Individual" id="sup-individual" required><label for="sup-individual">Individual</label></div><div class="amount-chip"><input type="radio" name="supporter_type" value="Company" id="sup-company"><label for="sup-company">Company</label></div><div class="amount-chip"><input type="radio" name="supporter_type" value="NGO / Organization" id="sup-ngo"><label for="sup-ngo">NGO / Organization</label></div><div class="amount-chip"><input type="radio" name="supporter_type" value="Institution" id="sup-institution"><label for="sup-institution">Institution</label></div></div>'
+        . '<div class="form-row"><label>Contact person (if organization)<input name="contact_person"></label><label>Phone number<input name="phone" placeholder="0712345678" required></label></div>'
+        . '<div class="form-row"><label>WhatsApp number<input name="whatsapp" placeholder="0712345678"></label><label>Email address<input type="email" name="email" required></label></div>'
+        . '<label>Location / address<input name="location_address" required></label>'
+        . '<h3>B. Type of support</h3><p class="muted">How would you like to support Royal Family Foundation?</p>'
+        . '<div class="amount-grid">'
+        . '<div class="amount-chip"><input type="checkbox" name="support_type[]" value="Financial Donation" id="st-financial"><label for="st-financial">Financial Donation</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_type[]" value="Equipment / Materials" id="st-equipment"><label for="st-equipment">Equipment / Materials</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_type[]" value="Event Sponsorship" id="st-event"><label for="st-event">Event Sponsorship</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_type[]" value="Project Sponsorship" id="st-project"><label for="st-project">Project Sponsorship</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_type[]" value="Professional Skills / Expertise" id="st-skills"><label for="st-skills">Skills / Expertise</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_type[]" value="In-kind Donation" id="st-inkind"><label for="st-inkind">In-kind Donation</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_type[]" value="Partnership" id="st-partnership"><label for="st-partnership">Partnership</label></div>'
+        . '</div><label>Other type of support<input name="support_type_other" placeholder="Optional"></label>'
+        . '<h3>C. Area you would like to support</h3>'
+        . '<div class="amount-grid">'
+        . '<div class="amount-chip"><input type="checkbox" name="support_area[]" value="Youth Empowerment" id="sa-youth"><label for="sa-youth">Youth Empowerment</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_area[]" value="Community Outreach" id="sa-outreach"><label for="sa-outreach">Community Outreach</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_area[]" value="Leadership Development" id="sa-leadership"><label for="sa-leadership">Leadership Development</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_area[]" value="Education & Skills Dev" id="sa-education"><label for="sa-education">Education & Skills Dev</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_area[]" value="Digital Innovation" id="sa-digital"><label for="sa-digital">Digital Innovation</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_area[]" value="Charity & Humanitarian" id="sa-charity"><label for="sa-charity">Charity & Humanitarian</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_area[]" value="Talent & Creativity" id="sa-talent"><label for="sa-talent">Talent & Creativity</label></div>'
+        . '<div class="amount-chip"><input type="checkbox" name="support_area[]" value="Women & Girls Support" id="sa-women"><label for="sa-women">Women & Girls Support</label></div>'
+        . '</div><label>Other area<input name="support_area_other" placeholder="Optional"></label>'
+        . '<h3>D. Support details</h3>'
+        . '<div class="form-row"><label>Amount / value of support, TZS (if applicable)<input type="number" name="amount" min="0" placeholder="e.g. 50000"></label><label>Preferred project / campaign to support<input name="preferred_project" placeholder="Optional"></label></div>'
+        . '<label style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Would you like your support to be:</label><div class="amount-grid"><div class="amount-chip"><input type="radio" name="frequency" value="One-time" id="freq-one" checked><label for="freq-one">One-time</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Monthly" id="freq-monthly"><label for="freq-monthly">Monthly</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Quarterly" id="freq-quarterly"><label for="freq-quarterly">Quarterly</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Annual" id="freq-annual"><label for="freq-annual">Annual</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Project-based" id="freq-project"><label for="freq-project">Project-based</label></div></div>'
+        . '<h3>E. Partnership & sponsorship</h3>'
+        . '<label style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Are you interested in a long-term partnership with RFF?</label><div class="amount-grid"><div class="amount-chip"><input type="radio" name="wants_partnership" value="Yes" id="pp-yes"><label for="pp-yes">Yes</label></div><div class="amount-chip"><input type="radio" name="wants_partnership" value="No" id="pp-no"><label for="pp-no">No</label></div><div class="amount-chip"><input type="radio" name="wants_partnership" value="Maybe" id="pp-maybe"><label for="pp-maybe">Maybe</label></div></div>'
+        . '<div class="form-row"><label>If yes, what type of partnership?<input name="partnership_type" placeholder="Optional"></label><label>What would you expect from the partnership?<input name="partnership_expectation" placeholder="Optional"></label></div>'
+        . '<h3>F. Recognition</h3>'
+        . '<label style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Would you like your name/organization to be recognized as a supporter?</label><div class="amount-grid"><div class="amount-chip"><input type="radio" name="wants_recognition" value="Yes" id="rec-yes"><label for="rec-yes">Yes</label></div><div class="amount-chip"><input type="radio" name="wants_recognition" value="No" id="rec-no"><label for="rec-no">No</label></div></div>'
+        . '<label>Preferred recognition name<input name="recognition_name" placeholder="Optional"></label>'
+        . '<h3>G. Additional information</h3>'
+        . '<label>Please share any message, idea, or special request<textarea name="message" rows="3"></textarea></label>'
+        . '<h3>H. Declaration</h3>'
+        . '<label style="display:flex;align-items:flex-start;gap:10px;font-weight:400"><input type="checkbox" name="agreed" value="1" required style="width:auto;margin-top:4px">I confirm that the information provided in this form is accurate and that my support is intended to contribute to the objectives and community initiatives of Royal Family Foundation.</label>'
+        . '<button class="btn gold" type="submit">Submit</button></form></div><p class="center muted" style="margin-top:20px">"Your presence can change a life."</p></div>';
+    break;
+case '/support/pay':
+    ensure_donor_sponsorships_table();
+    $donorId = (int)($_GET['id'] ?? 0);
+    $donorToken = (string)($_GET['token'] ?? '');
+    $donorStmt = db()->prepare('SELECT * FROM donor_sponsorships WHERE id = ? AND access_token = ? LIMIT 1');
+    $donorStmt->execute([$donorId, $donorToken]);
+    $donorRow = $donorStmt->fetch();
+    if (!$donorRow) { $content = '<div class="page"><p class="eyebrow">Royal Family Foundation</p><h1>Submission not found.</h1><p class="lead">Please submit the support form again.</p><a class="btn" href="/donate">Back to form</a></div>'; break; }
+    if ($donorRow['status'] === 'paid') { $content = '<div class="page"><p class="eyebrow">Royal Family Foundation</p><h1>Thank you!</h1><p class="lead">Your contribution of TZS '.number_format((float)$donorRow['amount']).' is confirmed. May God bless you for your generosity.</p></div>'; break; }
+    $content = '<div class="page"><p class="eyebrow">Royal Family Foundation</p><h1>Confirm your payment</h1><div class="form-card"><div class="plan-summary"><h2>'.e($donorRow['full_name']).'</h2><p class="muted">Supporting: '.e($donorRow['preferred_project'] ?: $donorRow['support_areas']).'</p><p class="muted">Amount: <strong>TZS '.number_format((float)$donorRow['amount']).'</strong> ('.e($donorRow['frequency'] ?: 'One-time').')</p></div><form class="form" method="post"><input type="hidden" name="action" value="pay_donor_support"><input type="hidden" name="id" value="'.(int)$donorRow['id'].'"><input type="hidden" name="token" value="'.e($donorToken).'"><label>Mobile number<input name="phone" value="'.e($donorRow['phone']).'" placeholder="0712345678" required></label><label>Choose payment method</label>
+<div class="payment-grid">
+    <div class="payment-option">
+        <input type="radio" name="method" value="mpesa" id="m-mpesa" checked>
+        <label for="m-mpesa">
+            <img src="'.e(app_base_path()).'/assets/payments/mpesa.png" class="payment-logo" alt="M-Pesa">
+            <span>Vodacom M-Pesa</span>
+        </label>
+    </div>
+    <div class="payment-option">
+        <input type="radio" name="method" value="tigopesa" id="m-tigo">
+        <label for="m-tigo">
+            <img src="'.e(app_base_path()).'/assets/payments/tigopesa.png" class="payment-logo" alt="Tigo Pesa">
+            <span>Tigo Pesa / Mixx</span>
+        </label>
+    </div>
+    <div class="payment-option">
+        <input type="radio" name="method" value="airtelmoney" id="m-airtel">
+        <label for="m-airtel">
+            <img src="'.e(app_base_path()).'/assets/payments/airtelmoney.png" class="payment-logo" alt="Airtel Money">
+            <span>Airtel Money</span>
+        </label>
+    </div>
+    <div class="payment-option">
+        <input type="radio" name="method" value="halopesa" id="m-halo">
+        <label for="m-halo">
+            <img src="'.e(app_base_path()).'/assets/payments/halopesa.png" class="payment-logo" alt="Halopesa">
+            <span>Halopesa</span>
+        </label>
+    </div>
+    <div class="payment-option" style="grid-column: 1 / -1">
+        <input type="radio" name="method" value="card" id="m-card">
+        <label for="m-card">
+            <span>Credit / Debit Card</span>
+            <small class="muted">Powered by ClickPesa</small>
+        </label>
+    </div>
+</div><button class="btn gold" type="submit">Pay TZS '.number_format((float)$donorRow['amount']).'</button></form></div></div>';
+    break;
 case '/login': $content='<div class="page"><div class="form-card"><p class="eyebrow">Welcome back</p><h2>Log in</h2><a class="google-btn" href="'.e(app_base_path()).'/auth/google/start"><span class="google-icon" aria-hidden="true">G</span> Continue with Google</a><div class="or">or use email</div><form class="form" method="post"><input type="hidden" name="action" value="login"><label>Email<input type="email" name="email" required></label><label>Password<input type="password" name="password" required></label><button class="btn" type="submit">Log in</button></form><p>New here? <a href="/signup"><u>Sign up</u></a></p></div></div>'; break;
 case '/signup': $content='<div class="page"><div class="form-card"><p class="eyebrow">Start your journey</p><h2>Create your account</h2><a class="google-btn" href="'.e(app_base_path()).'/auth/google/start"><span class="google-icon" aria-hidden="true">G</span> Sign up with Google</a><div class="or">or create an account with email</div><form class="form" method="post" enctype="application/x-www-form-urlencoded"><input type="hidden" name="action" value="signup"><label>Full name<input name="name" required></label><label>Email<input type="email" name="email" required></label><label>Password<input type="password" name="password" minlength="6" required></label><button class="btn" type="submit">Sign up</button></form></div></div>'; break;
-case '/dashboard':
-    // Re-read membership status fresh from the database rather than trusting the session,
-    // so the badge below reflects a subscription that was just confirmed by the ClickPesa webhook.
+case '/dashboard': $dashAvatar = profile_src($user); $dashPhoto = $dashAvatar ? '<img class="dashboard-avatar" src="'.e($dashAvatar).'" alt="Profile photo of '.e($user['name']).'">' : '<div class="dashboard-avatar dashboard-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>'; $eventCards=''; foreach($events as $event) $eventCards.='<article class="card"><p class="eyebrow">Upcoming event</p><h3>'.e($event['title']).'</h3><p>'.e($event['description']).'</p><p class="muted">'.e($event['location'] ?? '').($event['event_date']?' · '.e(date('M j, Y g:i A', strtotime($event['event_date']))):'').'</p></article>'; $noticeCards=''; foreach($notifications as $notice) $noticeCards.='<article class="card"><p class="eyebrow">Notification</p><h3>'.e($notice['title']).'</h3><p>'.e($notice['message']).'</p><p class="muted">'.e(date('M j, Y', strtotime($notice['created_at']))).'</p></article>'; $dashBadge = badge_display($user['membership_badge'] ?? null); $membershipStat = $user['membership'] ? '<span class="badge-chip badge-'.e($user['membership_badge'] ?? '').'">'.$dashBadge['icon'].' '.e($dashBadge['label']).'</span>'.($user['membership_id']?'<br><small class="muted">'.e($user['membership_id']).'</small>':'') : '—'; $content='<div class="page"><div class="dashboard-welcome">'.$dashPhoto.'<div><p class="eyebrow">Member space</p><h1>Welcome, '.e($user['name']).'</h1><p class="muted">Your profile photo appears here after you add it from your profile page.</p></div></div><div class="stats"><div class="stat"><strong>'.$membershipStat.'</strong><span>Membership status</span></div><div class="stat"><strong>'.count($events).'</strong><span>Upcoming events</span></div><div class="stat"><strong>'.count($notifications).'</strong><span>Notifications</span></div></div><section class="section"><p class="eyebrow">Stay connected</p><h2>Events and updates</h2><div class="grid">'.($eventCards ?: '<article class="card"><p class="muted">No upcoming events yet.</p></article>').($noticeCards ?: '<article class="card"><p class="muted">No new notifications.</p></article>').'</div></section><div class="grid"><article class="card"><h3>Your profile</h3><p>'.e($user['email']).'</p><a class="btn" href="/profile">Edit profile</a></article><article class="card"><h3>Grow with us</h3><p>Activate your membership and join the next community experience.</p><a class="btn gold" href="/members">Choose a plan</a></article></div></div>'; break;
+case '/profile':
     try {
-        $stmt = db()->prepare('SELECT membership_active, membership_id, membership_tier FROM users WHERE id = ? LIMIT 1');
-        $stmt->execute([$user['id']]);
-        if ($fresh = $stmt->fetch()) {
-            $user['membership'] = (bool)$fresh['membership_active'];
-            $user['membership_id'] = $fresh['membership_id'];
-            $user['membership_tier'] = $fresh['membership_tier'];
-            $_SESSION['user']['membership'] = $user['membership'];
-            $_SESSION['user']['membership_id'] = $user['membership_id'];
+        ensure_membership_badge_column();
+        $freshStmt = db()->prepare('SELECT membership_active, membership_id, membership_badge FROM users WHERE id = ? LIMIT 1');
+        $freshStmt->execute([$user['id']]);
+        $fresh = $freshStmt->fetch();
+        if ($fresh) { $user['membership'] = (bool)$fresh['membership_active']; $user['membership_id'] = $fresh['membership_id']; $user['membership_badge'] = $fresh['membership_badge']; $_SESSION['user'] = $user; }
+    } catch (Throwable $e) {}
+    $avatar = profile_src($user);
+    $cardBadge = badge_display($user['membership_badge'] ?? null);
+    $membershipCard = !empty($user['membership']) ? '<div class="membership-card"><div class="membership-card-top"><span class="badge-chip '.e('badge-' . ($user['membership_badge'] ?? '')).'">'.$cardBadge['icon'].' '.e($cardBadge['label']).'</span></div><div class="membership-card-body">'.($avatar ? '<img class="membership-card-photo" src="'.e($avatar).'" alt="Profile photo">' : '<div class="membership-card-photo membership-card-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>').'<div><h3>'.e($user['name']).'</h3><p>Royal Family TZ Member</p><p class="membership-card-id">'.e($user['membership_id'] ?: 'ID pending confirmation').'</p></div></div></div>' : '<div class="card"><p class="muted">You are not an active member yet.</p><a class="btn gold" href="/members">Become a member</a></div>';
+    $ticketCards = '';
+    try {
+        ensure_ticket_column();
+        $tStmt = db()->prepare("SELECT b.id, b.guests, t.title, t.destination, t.trip_date, tx.order_reference FROM trip_bookings b JOIN trips t ON t.id = b.trip_id LEFT JOIN transactions tx ON tx.id = b.transaction_id WHERE b.user_id = ? AND b.status = 'paid' ORDER BY t.trip_date DESC");
+        $tStmt->execute([$user['id']]);
+        foreach ($tStmt->fetchAll() as $ticket) {
+            $qrData = 'RFTZ|' . ($user['membership_id'] ?: ('USER-' . $user['id'])) . '|' . $ticket['order_reference'];
+            $qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' . rawurlencode($qrData);
+            $ticketCards .= '<article class="ticket-card"><div class="ticket-info"><p class="eyebrow">'.e($ticket['destination']).'</p><h3>'.e($ticket['title']).'</h3><p class="muted">'.($ticket['trip_date'] ? e(date('M j, Y', strtotime($ticket['trip_date']))) : 'Date to be confirmed').' · '.e((string)$ticket['guests']).' guest(s)</p><p class="muted">Ref: '.e((string)$ticket['order_reference']).'</p><button class="btn" type="button" onclick="window.print()">Print / save as PDF</button></div><img class="ticket-qr" src="'.e($qrUrl).'" alt="Ticket QR code"></article>';
         }
     } catch (Throwable $e) {}
-    $membershipStat = '—';
-    if (!empty($user['membership'])) { $badge = membership_badge($user['membership_tier'] ?? null); $membershipStat = '<span class="badge-pill '.e($badge['class']).'">'.$badge['emoji'].' '.e($badge['label']).'</span>'.($user['membership_id'] ? '<br><small>'.e($user['membership_id']).'</small>' : ''); }
-    $dashAvatar = profile_src($user); $dashPhoto = $dashAvatar ? '<img class="dashboard-avatar" src="'.e($dashAvatar).'" alt="Profile photo of '.e($user['name']).'">' : '<div class="dashboard-avatar dashboard-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>'; $eventCards=''; foreach($events as $event) $eventCards.='<article class="card"><p class="eyebrow">Upcoming event</p><h3>'.e($event['title']).'</h3><p>'.e($event['description']).'</p><p class="muted">'.e($event['location'] ?? '').($event['event_date']?' · '.e(date('M j, Y g:i A', strtotime($event['event_date']))):'').'</p></article>'; $noticeCards=''; foreach($notifications as $notice) $noticeCards.='<article class="card"><p class="eyebrow">Notification</p><h3>'.e($notice['title']).'</h3><p>'.e($notice['message']).'</p><p class="muted">'.e(date('M j, Y', strtotime($notice['created_at']))).'</p></article>'; $content='<div class="page"><div class="dashboard-welcome">'.$dashPhoto.'<div><p class="eyebrow">Member space</p><h1>Welcome, '.e($user['name']).'</h1><p class="muted">Your profile photo appears here after you add it from your profile page.</p></div></div><div class="stats"><div class="stat"><strong>'.$membershipStat.'</strong><span>Membership status</span></div><div class="stat"><strong>'.count($events).'</strong><span>Upcoming events</span></div><div class="stat"><strong>'.count($notifications).'</strong><span>Notifications</span></div></div><section class="section"><p class="eyebrow">Stay connected</p><h2>Events and updates</h2><div class="grid">'.($eventCards ?: '<article class="card"><p class="muted">No upcoming events yet.</p></article>').($noticeCards ?: '<article class="card"><p class="muted">No new notifications.</p></article>').'</div></section><div class="grid"><article class="card"><h3>Your profile</h3><p>'.e($user['email']).'</p><a class="btn" href="/profile">Edit profile</a></article><article class="card"><h3>Grow with us</h3><p>Activate your membership and join the next community experience.</p><a class="btn gold" href="/members">Choose a plan</a></article></div></div>'; break;
-case '/profile': $avatar = profile_src($user); $content='<div class="page"><div class="form-card"><p class="eyebrow">Member details</p><h2>Your profile</h2><div class="avatar-picker">'.($avatar?'<img class="profile-avatar" src="'.e($avatar).'" alt="Profile photo">':'<div class="profile-placeholder">'.e(strtoupper(substr($user['name'],0,1))).'</div>').'<label class="camera-button" for="profile_image" title="Add or change profile photo" aria-label="Add or change profile photo">&#128247;</label></div><p class="photo-hint">Tap the camera icon to add or change your photo.</p><form class="form" method="post" enctype="multipart/form-data"><input type="hidden" name="action" value="profile_update"><label>Display name<input name="name" value="'.e($user['name']).'" required></label><label>Email<input value="'.e($user['email']).'" disabled></label><label>Bio<textarea name="bio" rows="4" placeholder="Tell the community about yourself"></textarea></label><input id="profile_image" class="visually-hidden" type="file" name="profile_image" accept="image/jpeg,image/png,image/webp" onchange="this.form.submit()"><button class="btn" type="submit">Save profile</button></form></div></div>'; break;
+    $ticketsSection = $ticketCards ? '<section class="section"><p class="eyebrow">Your tickets</p><h2>Digital tickets</h2><div class="ticket-grid">'.$ticketCards.'</div></section>' : '';
+    $content='<div class="page"><section class="section" style="margin-top:0"><p class="eyebrow">Member details</p><h2>Your membership card</h2>'.$membershipCard.'</section>'.$ticketsSection.'<div class="form-card"><p class="eyebrow">Member details</p><h2>Your profile</h2><div class="avatar-picker">'.($avatar?'<img class="profile-avatar" src="'.e($avatar).'" alt="Profile photo">':'<div class="profile-placeholder">'.e(strtoupper(substr($user['name'],0,1))).'</div>').'<label class="camera-button" for="profile_image" title="Add or change profile photo" aria-label="Add or change profile photo">&#128247;</label></div><p class="photo-hint">Tap the camera icon to add or change your photo.</p><form class="form" method="post" enctype="multipart/form-data"><input type="hidden" name="action" value="profile_update"><label>Display name<input name="name" value="'.e($user['name']).'" required></label><label>Email<input value="'.e($user['email']).'" disabled></label><label>Bio<textarea name="bio" rows="4" placeholder="Tell the community about yourself"></textarea></label><input id="profile_image" class="visually-hidden" type="file" name="profile_image" accept="image/jpeg,image/png,image/webp" onchange="this.form.submit()"><button class="btn" type="submit">Save profile</button></form></div></div>'; break;
 case '/subscribe':
-    $content = '<div class="page"><p class="eyebrow">Membership</p>';
-    $planId = trim((string)($_GET['plan_id'] ?? ''));
-    $plan = $membershipPlans[$planId] ?? null;
-    // /subscribe only ever shows a focused checkout for a specific plan chosen on /members.
-    // Bare /subscribe, or an unknown/missing plan_id, sends the member back to pick one.
-    if (!$plan) {
-        header('Location: /members', true, 302);
-        exit;
+    if (!$user) { header('Location: /login'); exit; }
+    $selectedTier = tier_by_key($tiers, (string)($_GET['tier'] ?? ''));
+    $selectedCycle = ($_GET['cycle'] ?? 'monthly') === 'yearly' ? 'yearly' : 'monthly';
+    if (!$selectedTier) {
+        $content = '<div class="page"><p class="eyebrow">Membership</p><h1>Choose a plan first.</h1><p class="lead">Pick a membership level on the Members page, then come back here to pay.</p><a class="btn gold" href="/members">View membership options</a></div>';
+        break;
     }
-    $periodLabel = $plan['period'] === 'yearly' ? 'Yearly Subscription' : 'Monthly Subscription';
-    $content .= '<h1>Subscribe — '.e($plan['tier']).'</h1><div class="card form-card"><p class="muted">'.e($periodLabel).' · TZS '.number_format($plan['amount']).'</p><form class="form" method="post"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="plan_id" value="'.e($plan['id']).'"><input type="hidden" name="tier" value="'.e($plan['tier']).'"><input type="hidden" name="amount" value="'.(int)$plan['amount'].'"><input type="hidden" name="period" value="'.e($plan['period']).'">'
-    . '<label>Your name<input name="name" value="'.e($user['name'] ?? '').'"></label>'
-    . '<label>Contact email<input type="email" name="email" value="'.e($user['email'] ?? '').'"></label>'
-    . '<label>Mobile number<input name="phone" placeholder="0712345678" required></label>'
-    . '<label>Choose payment method<select name="method"><option value="mobile">Mobile Money (ClickPesa / M-Pesa)</option><option value="card">Card checkout</option></select></label>'
-    . '<button class="btn gold" type="submit">Subscribe</button></form></div>';
-    $content .= '</div>';
+    $planAmount = (int)$selectedTier[$selectedCycle];
+    $cycleLabel = $selectedCycle === 'yearly' ? 'year' : 'month';
+    $content = '<div class="page"><p class="eyebrow">Membership</p><h1>Confirm your plan.</h1><div class="form-card"><div class="plan-summary"><span class="badge-chip '.e($selectedTier['badge_class']).'">'.$selectedTier['icon'].' '.e($selectedTier['badge']).'</span><h2>'.e($selectedTier['name']).'</h2><p class="muted">TZS '.number_format($planAmount).' / '.$cycleLabel.' — '.e($selectedTier['text']).'</p><a class="muted" href="/members">Change plan</a></div><form class="form" method="post"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier_key" value="'.e($selectedTier['key']).'"><input type="hidden" name="cycle" value="'.e($selectedCycle).'"><label>Mobile number<input name="phone" placeholder="0712345678" required></label><label>Choose payment method</label>
+<div class="payment-grid">
+    <div class="payment-option">
+        <input type="radio" name="method" value="mpesa" id="m-mpesa" checked>
+        <label for="m-mpesa">
+            <img src="'.e(app_base_path()).'/assets/payments/mpesa.png" class="payment-logo" alt="M-Pesa">
+            <span>Vodacom M-Pesa</span>
+        </label>
+    </div>
+    <div class="payment-option">
+        <input type="radio" name="method" value="tigopesa" id="m-tigo">
+        <label for="m-tigo">
+            <img src="'.e(app_base_path()).'/assets/payments/tigopesa.png" class="payment-logo" alt="Tigo Pesa">
+            <span>Tigo Pesa / Mixx</span>
+        </label>
+    </div>
+    <div class="payment-option">
+        <input type="radio" name="method" value="airtelmoney" id="m-airtel">
+        <label for="m-airtel">
+            <img src="'.e(app_base_path()).'/assets/payments/airtelmoney.png" class="payment-logo" alt="Airtel Money">
+            <span>Airtel Money</span>
+        </label>
+    </div>
+    <div class="payment-option">
+        <input type="radio" name="method" value="halopesa" id="m-halo">
+        <label for="m-halo">
+            <img src="'.e(app_base_path()).'/assets/payments/halopesa.png" class="payment-logo" alt="Halopesa">
+            <span>Halopesa</span>
+        </label>
+    </div>
+    <div class="payment-option" style="grid-column: 1 / -1">
+        <input type="radio" name="method" value="card" id="m-card">
+        <label for="m-card">
+            <span>Credit / Debit Card</span>
+            <small class="muted">Powered by ClickPesa</small>
+        </label>
+    </div>
+</div><button class="btn gold" type="submit">Pay TZS '.number_format($planAmount).' and join</button></form></div></div>';
     break;
 case '/admin':
     $active = $revenue = $posts = 0; $clickReady = cp_config('CLICKPESA_CLIENT_ID') !== '' && cp_config('CLICKPESA_API_KEY') !== '';
