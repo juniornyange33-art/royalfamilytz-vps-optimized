@@ -74,29 +74,24 @@ function handleContactSubmission($senderName, $senderEmail, $message, $phone = '
     // Deliver straight to your personal Gmail inbox
     return sendResendEmail('royalfamilytz.org@gmail.com', $subject, $body);
 }
-/**
- * Check if mailing capability is configured
- */
-function mail_configured() {
-    global $config;
-    $apiKey = getenv('RESEND_API_KEY') ?: ($config['RESEND_API_KEY'] ?? '');
-    return !empty($apiKey);
-}
-/**
- * Legacy wrapper function to prevent "undefined function send_email()" errors
- */
-function send_email($to, $subject, $message, $headers = '', $attachments = []) {
-    // If message is plain text, convert newlines to HTML breaks
-    $htmlBody = (strpos($message, '<') === false) ? nl2br(htmlspecialchars($message)) : $message;
-    
-    return sendResendEmail($to, $subject, $htmlBody, $attachments);
+// Prevent redeclaration errors if the function was already defined elsewhere
+if (!function_exists('mail_configured')) {
+    /**
+     * Legacy wrapper for mail_configured() check
+     */
+    function mail_configured() {
+        global $config;
+        $apiKey = getenv('RESEND_API_KEY') ?: ($config['RESEND_API_KEY'] ?? '');
+        return !empty($apiKey);
+    }
 }
 
-/**
- * Legacy wrapper for mail_configured() check
- */
-function mail_configured() {
-    global $config;
-    $apiKey = getenv('RESEND_API_KEY') ?: ($config['RESEND_API_KEY'] ?? '');
-    return !empty($apiKey);
+if (!function_exists('send_email')) {
+    /**
+     * Legacy wrapper function to prevent "undefined function send_email()" errors
+     */
+    function send_email($to, $subject, $message, $headers = '', $attachments = []) {
+        $htmlBody = (strpos($message, '<') === false) ? nl2br(htmlspecialchars($message)) : $message;
+        return sendResendEmail($to, $subject, $htmlBody, $attachments);
+    }
 }
