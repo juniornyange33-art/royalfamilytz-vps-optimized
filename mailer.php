@@ -1,25 +1,30 @@
 <?php
-// Load local configuration
-$config = require __DIR__ . '/local-config.php';
-
+// Safely load local-config.php ONLY if it exists
+$config = [];
+if (file_exists(__DIR__ . '/local-config.php')) {
+    $config = require __DIR__ . '/local-config.php';
+}
 /**
  * Send an email via Resend API
- *
- * @param string|array $to Recipient email or array of emails
- * @param string $subject Email subject line
- * @param string $htmlBody HTML content of the email
- * @param array $attachments Optional array of attachments (e.g., PDF trip tickets)
- * @return bool True on success, False on failure
  */
 function sendResendEmail($to, $subject, $htmlBody, $attachments = []) {
     global $config;
 
-    $apiKey = $config['RESEND_API_KEY'];
-    $from = $config['MAIL_FROM'];
+    // Retrieve credentials
+    $apiKey = getenv('RESEND_API_KEY') ?: ($config['RESEND_API_KEY'] ?? '');
+    
+    // MUST use verified domain for sending (Resend requirement)
+    $from = 'Royal Family TZ <support@royalfamilytz.org>'; 
+
+    if (empty($apiKey)) {
+        error_log("Resend API Key is missing.");
+        return false;
+    }
 
     $payload = [
         'from' => $from,
         'to' => is_array($to) ? array_values($to) : [$to],
+        'reply_to' => 'royalfamilytz.org@gmail.com', // Replies go directly to your Gmail!
         'subject' => $subject,
         'html' => $htmlBody
     ];
@@ -50,54 +55,22 @@ function sendResendEmail($to, $subject, $htmlBody, $attachments = []) {
         return false;
     }
 
-    if ($httpCode === 200 || $httpCode === 201) {
-        return true;
-    }
-
-    error_log("Resend API Failed [HTTP {$httpCode}]: " . $response);
-    return false;
+    return ($httpCode === 200 || $httpCode === 201);
 }
 
 /**
- * Handle "Contact Us" notifications sent to your Gmail inbox
+ * Route "Contact Us" submissions directly to your Gmail inbox
  */
 function handleContactSubmission($senderName, $senderEmail, $message, $phone = 'N/A') {
-    global $config;
-
     $subject = "New Contact Inquiry from " . htmlspecialchars($senderName);
     $body = "
-        <h2>New Message Received</h2>
+        <h2>New Inquiry Received</h2>
         <p><strong>Name:</strong> " . htmlspecialchars($senderName) . "</p>
         <p><strong>Email:</strong> " . htmlspecialchars($senderEmail) . "</p>
         <p><strong>Phone:</strong> " . htmlspecialchars($phone) . "</p>
         <p><strong>Message:</strong><br>" . nl2br(htmlspecialchars($message)) . "</p>
     ";
 
-    return sendResendEmail($config['ADMIN_EMAIL'], $subject, $body);
+    // Deliver straight to your personal Gmail inbox
+    return sendResendEmail('royalfamilytz.org@gmail.com', $subject, $body);
 }
-
-/**
- * Handle Trip Ticket Email Delivery after successful payment
- */
-function sendTripTicketEmail($customerEmail, $customerName, $tripDetails, $pdfAttachmentBase64 = null) {
-    $subject = "Your Trip Ticket Confirmation - Royal Family TZ";
-    $body = "
-        <h2>Trip Confirmation & Ticket</h2>
-        <p>Hello " . htmlspecialchars($customerName) . ",</p>
-        <p>Thank you for your payment! Your booking for <strong>" . htmlspecialchars($tripDetails['title']) . "</strong> has been confirmed.</p>
-        <p><strong>Reference Code:</strong> " . htmlspecialchars($tripDetails['reference']) . "</p>
-        <p><strong>Date & Time:</strong> " . htmlspecialchars($tripDetails['date']) . "</p>
-        <p>Please find your official trip ticket attached below or in your dashboard.</p>
-    ";
-
-    $attachments = [];
-    if ($pdfAttachmentBase64) {
-        $attachments[] = [
-            'filename' => 'Trip_Ticket_' . $tripDetails['reference'] . '.pdf',
-            'content' => $pdfAttachmentBase64
-        ];
-    }
-
-    return sendResendEmail($customerEmail, $subject, $body, $attachments);
-}
-
