@@ -74,3 +74,11 @@ function handleContactSubmission($senderName, $senderEmail, $message, $phone = '
     // Deliver straight to your personal Gmail inbox
     return sendResendEmail('royalfamilytz.org@gmail.com', $subject, $body);
 }
+/**
+ * Check if mailing capability is configured
+ */
+function mail_configured() {
+    global $config;
+    $apiKey = getenv('RESEND_API_KEY') ?: ($config['RESEND_API_KEY'] ?? '');
+    return !empty($apiKey);
+}
