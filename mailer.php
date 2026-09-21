@@ -82,3 +82,21 @@ function mail_configured() {
     $apiKey = getenv('RESEND_API_KEY') ?: ($config['RESEND_API_KEY'] ?? '');
     return !empty($apiKey);
 }
+/**
+ * Legacy wrapper function to prevent "undefined function send_email()" errors
+ */
+function send_email($to, $subject, $message, $headers = '', $attachments = []) {
+    // If message is plain text, convert newlines to HTML breaks
+    $htmlBody = (strpos($message, '<') === false) ? nl2br(htmlspecialchars($message)) : $message;
+    
+    return sendResendEmail($to, $subject, $htmlBody, $attachments);
+}
+
+/**
+ * Legacy wrapper for mail_configured() check
+ */
+function mail_configured() {
+    global $config;
+    $apiKey = getenv('RESEND_API_KEY') ?: ($config['RESEND_API_KEY'] ?? '');
+    return !empty($apiKey);
+}
