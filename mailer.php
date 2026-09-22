@@ -95,3 +95,34 @@ if (!function_exists('send_email')) {
         return sendResendEmail($to, $subject, $htmlBody, $attachments);
     }
 }
+// Capture form data sent by the user
+$name = $_POST['name'] ?? '';
+$email = $_POST['email'] ?? '';
+$subject = $_POST['subject'] ?? '';
+$message = $_POST['message'] ?? '';
+
+if (!empty($email) && !empty($message)) {
+    // Make.com Webhook URL for Scenario 1
+    $webhookUrl = "https://hook.eu1.make.com/YOUR_MAKE_WEBHOOK_URL_HERE";
+
+    // Prepare payload
+    $payload = json_encode([
+        "name" => $name,
+        "email" => $email,
+        "subject" => $subject,
+        "message" => $message
+    ]);
+
+    // Send payload to Make.com via cURL
+    $ch = curl_init($webhookUrl);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $payload);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response = curl_exec($ch);
+    curl_close($ch);
+
+    echo json_encode(["status" => "success", "message" => "Message sent successfully!"]);
+} else {
+    echo json_encode(["status" => "error", "message" => "Please fill in all required fields."]);
+}
