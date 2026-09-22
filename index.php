@@ -20,29 +20,6 @@ function tier_by_key(array $tiers, string $key): ?array { foreach ($tiers as $t)
 function tier_by_name(array $tiers, string $name): ?array { foreach ($tiers as $t) if ($t['name'] === $name) return $t; return null; }
 // A stored transaction "tier" looks like "Patron (Yearly)" — strip the billing-cycle suffix to match a tier definition.
 function tier_base_name(string $storedTier): string { return trim((string)preg_replace('/\s*\([^)]*\)\s*$/', '', $storedTier)); }
-function ensure_membership_signups_table(): void {
-    db()->exec("CREATE TABLE IF NOT EXISTS membership_signups (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NULL,
-        full_name VARCHAR(150) NOT NULL,
-        email VARCHAR(150) NOT NULL,
-        phone VARCHAR(30) NOT NULL,
-        whatsapp VARCHAR(30) NULL,
-        gender VARCHAR(20) NULL,
-        city_region VARCHAR(120) NULL,
-        tier_key VARCHAR(20) NULL,
-        cycle VARCHAR(10) NULL,
-        status VARCHAR(20) NOT NULL DEFAULT 'new',
-        membership_id VARCHAR(40) NULL,
-        order_reference VARCHAR(40) NULL,
-        access_token VARCHAR(64) NOT NULL,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-    $columns = [];
-    foreach (db()->query('SHOW COLUMNS FROM membership_signups')->fetchAll() as $column) $columns[(string)$column['Field']] = true;
-    if (!isset($columns['gender'])) db()->exec('ALTER TABLE membership_signups ADD COLUMN gender VARCHAR(20) NULL');
-    if (!isset($columns['city_region'])) db()->exec('ALTER TABLE membership_signups ADD COLUMN city_region VARCHAR(120) NULL');
-}
 function ensure_donor_sponsorships_table(): void {
     db()->exec("CREATE TABLE IF NOT EXISTS donor_sponsorships (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -76,6 +53,7 @@ function ensure_donor_sponsorships_table(): void {
 function ensure_membership_applications_table(): void {
     db()->exec("CREATE TABLE IF NOT EXISTS membership_applications (
         id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NULL,
         full_name VARCHAR(150) NOT NULL,
         date_of_birth DATE NOT NULL,
         gender VARCHAR(20) NOT NULL,
@@ -95,38 +73,21 @@ function ensure_membership_applications_table(): void {
         emergency_phone VARCHAR(30) NULL,
         emergency_city VARCHAR(120) NULL,
         agreed_constitution TINYINT(1) NOT NULL DEFAULT 0,
+        tier_key VARCHAR(20) NULL,
+        cycle VARCHAR(10) NULL,
         status VARCHAR(20) NOT NULL DEFAULT 'pending_payment',
         membership_id VARCHAR(40) NULL,
         order_reference VARCHAR(40) NULL,
         access_token VARCHAR(64) NOT NULL,
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-}
-function membership_category_prefix(string $category): string {
-    return match ($category) {
-        'Founder Member' => 'FOUNDER',
-        'Honorary Member' => 'HONORARY',
-        default => 'ORDINARY',
-    };
+    $columns = [];
+    foreach (db()->query('SHOW COLUMNS FROM membership_applications')->fetchAll() as $column) $columns[(string)$column['Field']] = true;
+    if (!isset($columns['user_id'])) db()->exec('ALTER TABLE membership_applications ADD COLUMN user_id INT NULL');
+    if (!isset($columns['tier_key'])) db()->exec('ALTER TABLE membership_applications ADD COLUMN tier_key VARCHAR(20) NULL');
+    if (!isset($columns['cycle'])) db()->exec("ALTER TABLE membership_applications ADD COLUMN cycle VARCHAR(10) NULL");
 }
 function ensure_registration_transaction_type(): void { static $done = false; if ($done) return; try { db()->exec("ALTER TABLE transactions MODIFY type ENUM('donation','subscription','trip','registration','membership_signup') NOT NULL"); } catch (Throwable $e) {} $done = true; }
-function send_membership_confirmation_email(string $orderReference): void {
-    try {
-        ensure_membership_applications_table();
-        $stmt = db()->prepare('SELECT * FROM membership_applications WHERE order_reference = ? LIMIT 1');
-        $stmt->execute([$orderReference]);
-        $app = $stmt->fetch();
-        if (!$app || !mail_configured()) return;
-        $body = "Hello {$app['full_name']},\n\n"
-            . "Congratulations — your Royal Family Foundation membership registration is confirmed.\n\n"
-            . "Membership category: {$app['category']}\n"
-            . "Membership ID: {$app['membership_id']}\n"
-            . "Registration fee (Tsh 5,000) and Annual fee (Tsh 20,000) received in full.\n\n"
-            . "Please keep this email and your Membership ID for your records and for attending Organization meetings and activities.\n\n"
-            . "\"Not Related by Blood, United by Dreams\"\nRoyal Family Foundation";
-        send_email((string)$app['email'], 'Your Royal Family Foundation membership is confirmed', $body);
-    } catch (Throwable $e) { /* Confirmation email is best-effort; registration/payment already succeeded. */ }
-} 
 function ensure_membership_badge_column(): void { static $done = false; if ($done) return; $columns = []; foreach (db()->query('SHOW COLUMNS FROM users')->fetchAll() as $column) $columns[(string)$column['Field']] = true; if (!isset($columns['membership_badge'])) db()->exec("ALTER TABLE users ADD COLUMN membership_badge VARCHAR(20) NULL"); $done = true; }
 function ensure_ticket_column(): void { static $done = false; if ($done) return; $columns = []; foreach (db()->query('SHOW COLUMNS FROM trip_bookings')->fetchAll() as $column) $columns[(string)$column['Field']] = true; if (!isset($columns['ticket_sent_at'])) db()->exec('ALTER TABLE trip_bookings ADD COLUMN ticket_sent_at DATETIME NULL'); $done = true; }
 function badge_display(?string $badgeKey): array {
@@ -138,20 +99,20 @@ function badge_display(?string $badgeKey): array {
 }
 function send_membership_signup_confirmation_email(string $orderReference): void {
     try {
-        ensure_membership_signups_table();
-        $stmt = db()->prepare('SELECT * FROM membership_signups WHERE order_reference = ? LIMIT 1');
+        ensure_membership_applications_table();
+        $stmt = db()->prepare('SELECT * FROM membership_applications WHERE order_reference = ? LIMIT 1');
         $stmt->execute([$orderReference]);
-        $signup = $stmt->fetch();
-        if (!$signup || !mail_configured()) return;
-        $tier = tier_by_key(tier_definitions(), (string)$signup['tier_key']);
+        $application = $stmt->fetch();
+        if (!$application || !mail_configured()) return;
+        $tier = tier_by_key(tier_definitions(), (string)$application['tier_key']);
         $perk = $tier['perk'] ?? 'your membership benefits';
-        $body = "Hello {$signup['full_name']},\n\n"
+        $body = "Hello {$application['full_name']},\n\n"
             . "Congratulations — your Royal Family TZ {$tier['name']} membership payment is confirmed.\n\n"
-            . "Membership ID: {$signup['membership_id']}\n"
+            . "Membership ID: {$application['membership_id']}\n"
             . "You will receive: {$perk}\n\n"
             . "Please keep this email and your Membership ID for your records.\n\n"
             . "Welcome to the family,\nRoyal Family TZ";
-        send_email((string)$signup['email'], 'Your Royal Family TZ membership is confirmed', $body);
+        send_email((string)$application['email'], 'Your Royal Family TZ membership is confirmed', $body);
     } catch (Throwable $e) { /* Confirmation email is best-effort; payment already succeeded. */ }
 }
 function send_trip_ticket_email(string $orderReference): void {
@@ -213,31 +174,19 @@ if ($path === '/api/clickpesa/webhook' && $_SERVER['REQUEST_METHOD'] === 'POST')
                     }
                     try { db()->prepare('UPDATE trip_bookings b JOIN transactions t ON t.id = b.transaction_id SET b.status = \'paid\' WHERE t.order_reference = ?')->execute([$reference]); } catch (Throwable $ignore) {}
                     if ($tx && $tx['type'] === 'trip') send_trip_ticket_email($reference);
-                    if ($tx && $tx['type'] === 'registration') {
+                    if ($tx && $tx['type'] === 'membership_signup') {
                         ensure_membership_applications_table();
-                        $appStmt = db()->prepare('SELECT id, category, membership_id FROM membership_applications WHERE order_reference = ? LIMIT 1');
+                        $appStmt = db()->prepare('SELECT id, user_id, tier_key, membership_id FROM membership_applications WHERE order_reference = ? LIMIT 1');
                         $appStmt->execute([$reference]);
                         $app = $appStmt->fetch();
                         if ($app && empty($app['membership_id'])) {
-                            $prefix = membership_category_prefix((string)$app['category']);
+                            $matchedTier = tier_by_key(tier_definitions(), (string)$app['tier_key']);
+                            $prefix = $matchedTier['id_prefix'] ?? 'MEMBER';
                             $membershipId = $prefix . '-' . str_pad((string)$app['id'], 6, '0', STR_PAD_LEFT);
                             db()->prepare("UPDATE membership_applications SET status = 'paid', membership_id = ? WHERE id = ?")->execute([$membershipId, $app['id']]);
-                        }
-                        send_membership_confirmation_email($reference);
-                    }
-                    if ($tx && $tx['type'] === 'membership_signup') {
-                        ensure_membership_signups_table();
-                        $signupStmt = db()->prepare('SELECT id, user_id, tier_key, membership_id FROM membership_signups WHERE order_reference = ? LIMIT 1');
-                        $signupStmt->execute([$reference]);
-                        $signup = $signupStmt->fetch();
-                        if ($signup && empty($signup['membership_id'])) {
-                            $matchedTier = tier_by_key(tier_definitions(), (string)$signup['tier_key']);
-                            $prefix = $matchedTier['id_prefix'] ?? 'MEMBER';
-                            $membershipId = $prefix . '-' . str_pad((string)$signup['id'], 6, '0', STR_PAD_LEFT);
-                            db()->prepare("UPDATE membership_signups SET status = 'paid', membership_id = ? WHERE id = ?")->execute([$membershipId, $signup['id']]);
-                            if (!empty($signup['user_id'])) {
+                            if (!empty($app['user_id'])) {
                                 ensure_membership_badge_column();
-                                db()->prepare('UPDATE users SET membership_active = 1, membership_id = COALESCE(membership_id, ?), membership_badge = ? WHERE id = ?')->execute([$membershipId, $matchedTier['badge_key'] ?? null, $signup['user_id']]);
+                                db()->prepare('UPDATE users SET membership_active = 1, membership_id = COALESCE(membership_id, ?), membership_badge = ? WHERE id = ?')->execute([$membershipId, $matchedTier['badge_key'] ?? null, $app['user_id']]);
                             }
                         }
                         send_membership_signup_confirmation_email($reference);
@@ -381,6 +330,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'contact') { try { ensure_contact_columns(); $name = trim($_POST['name'] ?? ''); $email = trim($_POST['email'] ?? ''); $message = trim($_POST['message'] ?? ''); if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || $message === '') throw new RuntimeException('Please provide your name, a valid email, and a message.'); db()->prepare('INSERT INTO contact_messages (name, email, message, status) VALUES (?, ?, ?, \'new\')')->execute([$name, $email, $message]); if (mail_configured()) { try { $mail = mail_config(); send_email((string)$mail['from'], 'New Contact Us message from ' . $name, "You received a new message from {$name} ({$email}):\n\n{$message}\n\nOpen your admin dashboard to reply."); } catch (Throwable $mailError) {} } $_SESSION['flash'] = 'Thanks — your message was sent. We will get back to you soon.'; } catch (Throwable $e) { $_SESSION['flash'] = 'Unable to send your message: ' . $e->getMessage(); } header('Location: /contact'); exit; }
     if ($action === 'contact_reply' && $user && $user['role'] === 'admin') { try { ensure_contact_columns(); $id = (int)($_POST['contact_id'] ?? 0); $reply = trim($_POST['reply'] ?? ''); if (!$id || $reply === '') throw new RuntimeException('A reply message is required.'); $stmt = db()->prepare('SELECT name, email FROM contact_messages WHERE id = ? LIMIT 1'); $stmt->execute([$id]); $contact = $stmt->fetch(); if (!$contact) throw new RuntimeException('Contact message not found.'); if (!mail_configured()) throw new RuntimeException('SMTP is not configured in local-config.php.'); send_email((string)$contact['email'], 'Reply from Royal Family TZ', "Hello {$contact['name']},\n\n{$reply}\n\nRegards,\nRoyal Family TZ"); db()->prepare('UPDATE contact_messages SET status = \'replied\', replied_at = NOW() WHERE id = ?')->execute([$id]); $_SESSION['flash'] = 'Reply sent to ' . $contact['email'] . '.'; } catch (Throwable $e) { $_SESSION['flash'] = 'Reply could not be sent: ' . $e->getMessage(); } header('Location: /admin'); exit; }
     if ($action === 'apply_membership') {
+        if (!$user) { $_SESSION['flash'] = 'Please create an account or log in to become a member.'; header('Location: /login?next=' . urlencode('/apply-membership')); exit; }
         try {
             ensure_membership_applications_table();
             $fullName = trim($_POST['full_name'] ?? '');
@@ -402,95 +352,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $emergencyPhone = trim($_POST['emergency_phone'] ?? '');
             $emergencyCity = trim($_POST['emergency_city'] ?? '');
             $agreed = !empty($_POST['agreed_constitution']);
+            $agreedTerms = ($_POST['agreed_terms'] ?? '0') === '1';
             if ($fullName === '' || $dob === '' || $gender === '' || $nationality === '' || $phone === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || $cityRegion === '') throw new RuntimeException('Please complete all required personal and contact fields.');
             if (!in_array($category, ['Founder Member', 'Ordinary Member', 'Honorary Member'], true)) throw new RuntimeException('Please choose a membership category.');
+            if (!$agreedTerms) throw new RuntimeException('Please agree to the Foundation Membership Terms & Conditions to continue.');
             if (!$agreed) throw new RuntimeException('You must agree to the Constitution & Principles to register.');
             $birthDate = DateTime::createFromFormat('Y-m-d', $dob);
             if (!$birthDate) throw new RuntimeException('Please provide a valid date of birth.');
             $age = $birthDate->diff(new DateTime('today'))->y;
             if ($age < 18) throw new RuntimeException('Membership is open to applicants 18 years and above.');
             $accessToken = bin2hex(random_bytes(16));
-            db()->prepare('INSERT INTO membership_applications (full_name, date_of_birth, gender, nationality, nida_number, phone, whatsapp, email, city_region, district_address, category, occupation, workplace, skills, emergency_name, emergency_relationship, emergency_phone, emergency_city, agreed_constitution, access_token) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)')
-                ->execute([$fullName, $dob, $gender, $nationality, $nida ?: null, $phone, $whatsapp ?: null, $email, $cityRegion, $districtAddress ?: null, $category, $occupation ?: null, $workplace ?: null, $skills ?: null, $emergencyName ?: null, $emergencyRelationship ?: null, $emergencyPhone ?: null, $emergencyCity ?: null, $accessToken]);
+            db()->prepare('INSERT INTO membership_applications (user_id, full_name, date_of_birth, gender, nationality, nida_number, phone, whatsapp, email, city_region, district_address, category, occupation, workplace, skills, emergency_name, emergency_relationship, emergency_phone, emergency_city, agreed_constitution, access_token) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)')
+                ->execute([$user['id'], $fullName, $dob, $gender, $nationality, $nida ?: null, $phone, $whatsapp ?: null, $email, $cityRegion, $districtAddress ?: null, $category, $occupation ?: null, $workplace ?: null, $skills ?: null, $emergencyName ?: null, $emergencyRelationship ?: null, $emergencyPhone ?: null, $emergencyCity ?: null, $accessToken]);
             $applicationId = (int)db()->lastInsertId();
-            header('Location: /apply-membership/pay?id=' . $applicationId . '&token=' . $accessToken); exit;
+            header('Location: /membership-form/plans?id=' . $applicationId . '&token=' . $accessToken); exit;
         } catch (Throwable $e) { $_SESSION['flash'] = 'Registration could not be submitted: ' . $e->getMessage(); header('Location: /apply-membership'); exit; }
     }
-    if ($action === 'pay_membership_fee') {
+    if ($action === 'membership_signup_pay') {
+        if (!$user) { $_SESSION['flash'] = 'Please log in to complete your membership payment.'; header('Location: /login?next=' . urlencode('/apply-membership')); exit; }
         try {
             ensure_membership_applications_table();
             $applicationId = (int)($_POST['id'] ?? 0);
             $token = (string)($_POST['token'] ?? '');
             $stmt = db()->prepare('SELECT * FROM membership_applications WHERE id = ? AND access_token = ? LIMIT 1');
             $stmt->execute([$applicationId, $token]);
-            $app = $stmt->fetch();
-            if (!$app) throw new RuntimeException('Registration not found. Please submit the form again.');
-            if ($app['status'] === 'paid') throw new RuntimeException('This registration is already paid and confirmed.');
-            $method = trim($_POST['method'] ?? 'mobile'); $phone = trim($_POST['phone'] ?? $app['phone']);
-            $amount = 25000.0; // Tsh 5,000 registration fee + Tsh 20,000 annual fee, fixed for every category
-            $reference = 'RG' . date('ymdHis') . strtoupper(bin2hex(random_bytes(2)));
-            ensure_registration_transaction_type();
-            db()->prepare('INSERT INTO transactions (user_id, type, tier, amount, currency, method, status, order_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([$user['id'] ?? null, 'registration', $app['category'], $amount, 'TZS', $method, 'pending', $reference]);
-            db()->prepare('UPDATE membership_applications SET order_reference = ? WHERE id = ?')->execute([$reference, $applicationId]);
-            $result = cp_start_payment($amount, $method, $phone, $reference, $app['full_name'], $app['email']);
-            db()->prepare('UPDATE transactions SET provider_ref = ?, channel = ? WHERE order_reference = ?')->execute([$result['id'] ?? null, $result['channel'] ?? $method, $reference]);
-            $_SESSION['active_payment'] = ['reference' => $reference, 'type' => 'registration', 'name' => $app['full_name']];
-            if (!empty($result['checkoutLink'])) { header('Location: ' . $result['checkoutLink']); exit; }
-            $_SESSION['flash'] = 'Membership payment request sent. Approve it on your phone; we will confirm it automatically.';
-            header('Location: /apply-membership/pay?id=' . $applicationId . '&token=' . $token); exit;
-        } catch (Throwable $e) { $_SESSION['flash'] = 'Payment could not start: ' . $e->getMessage(); header('Location: /apply-membership/pay?id=' . (int)($_POST['id'] ?? 0) . '&token=' . urlencode((string)($_POST['token'] ?? ''))); exit; }
-    }
-
-    if ($action === 'membership_signup_start') {
-        if (!$user) { $_SESSION['flash'] = 'Please create an account or log in to become a member.'; header('Location: /login?next=' . urlencode('/membership-form')); exit; }
-        try {
-            ensure_membership_signups_table();
-            $fullName = trim($_POST['full_name'] ?? '');
-            $email = strtolower(trim($_POST['email'] ?? ''));
-            $phone = trim($_POST['phone'] ?? '');
-            $whatsapp = trim($_POST['whatsapp'] ?? '');
-            $gender = trim($_POST['gender'] ?? '');
-            $cityRegion = trim($_POST['city_region'] ?? '');
-            $agreedTerms = ($_POST['agreed_terms'] ?? '0') === '1';
-            if ($fullName === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || $phone === '' || $gender === '' || $cityRegion === '') throw new RuntimeException('Please provide your full name, a valid email, phone, gender, and city/region.');
-            if (!$agreedTerms) throw new RuntimeException('Please agree to the Foundation Membership Terms & Conditions to continue.');
-            $accessToken = bin2hex(random_bytes(16));
-            db()->prepare('INSERT INTO membership_signups (user_id, full_name, email, phone, whatsapp, gender, city_region, access_token) VALUES (?,?,?,?,?,?,?,?)')
-                ->execute([$user['id'], $fullName, $email, $phone, $whatsapp ?: null, $gender, $cityRegion, $accessToken]);
-            $signupId = (int)db()->lastInsertId();
-            header('Location: /membership-form/plans?id=' . $signupId . '&token=' . $accessToken); exit;
-        } catch (Throwable $e) { $_SESSION['flash'] = 'Could not continue: ' . $e->getMessage(); header('Location: /membership-form'); exit; }
-    }
-    if ($action === 'membership_signup_pay') {
-        if (!$user) { $_SESSION['flash'] = 'Please log in to complete your membership payment.'; header('Location: /login?next=' . urlencode('/membership-form')); exit; }
-        try {
-            ensure_membership_signups_table();
-            $signupId = (int)($_POST['id'] ?? 0);
-            $token = (string)($_POST['token'] ?? '');
-            $stmt = db()->prepare('SELECT * FROM membership_signups WHERE id = ? AND access_token = ? LIMIT 1');
-            $stmt->execute([$signupId, $token]);
-            $signup = $stmt->fetch();
-            if (!$signup) throw new RuntimeException('Your form session was not found. Please start again.');
-            if ($signup['status'] === 'paid') throw new RuntimeException('This membership is already paid and confirmed.');
+            $application = $stmt->fetch();
+            if (!$application) throw new RuntimeException('Your registration was not found. Please start again.');
+            if ($application['status'] === 'paid') throw new RuntimeException('This membership is already paid and confirmed.');
             $selectedTier = tier_by_key(tier_definitions(), (string)($_POST['tier_key'] ?? ''));
             if (!$selectedTier) throw new RuntimeException('Please choose a membership plan.');
             $cycle = ($_POST['cycle'] ?? 'monthly') === 'yearly' ? 'yearly' : 'monthly';
             if ($selectedTier[$cycle] === null) $cycle = 'yearly';
             $amount = (float)$selectedTier[$cycle];
             if (!$amount) throw new RuntimeException('That plan is not available.');
-            $method = trim($_POST['method'] ?? 'mobile'); $phone = trim($_POST['phone'] ?? $signup['phone']);
+            $method = trim($_POST['method'] ?? 'mobile'); $phone = trim($_POST['phone'] ?? $application['phone']);
             $reference = 'MS' . date('ymdHis') . strtoupper(bin2hex(random_bytes(2)));
             ensure_registration_transaction_type();
             $tierLabel = $selectedTier['name'] . ' (' . ($cycle === 'yearly' ? 'Yearly' : 'Monthly') . ')';
-            db()->prepare('INSERT INTO transactions (user_id, type, tier, amount, currency, method, status, order_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([$signup['user_id'], 'membership_signup', $tierLabel, $amount, 'TZS', $method, 'pending', $reference]);
-            db()->prepare('UPDATE membership_signups SET tier_key = ?, cycle = ?, order_reference = ? WHERE id = ?')->execute([$selectedTier['key'], $cycle, $reference, $signupId]);
-            $result = cp_start_payment($amount, $method, $phone, $reference, $signup['full_name'], $signup['email']);
+            db()->prepare('INSERT INTO transactions (user_id, type, tier, amount, currency, method, status, order_reference) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')->execute([$application['user_id'], 'membership_signup', $tierLabel, $amount, 'TZS', $method, 'pending', $reference]);
+            db()->prepare('UPDATE membership_applications SET tier_key = ?, cycle = ?, order_reference = ? WHERE id = ?')->execute([$selectedTier['key'], $cycle, $reference, $applicationId]);
+            $result = cp_start_payment($amount, $method, $phone, $reference, $application['full_name'], $application['email']);
             db()->prepare('UPDATE transactions SET provider_ref = ?, channel = ? WHERE order_reference = ?')->execute([$result['id'] ?? null, $result['channel'] ?? $method, $reference]);
-            $_SESSION['active_payment'] = ['reference' => $reference, 'type' => 'membership_signup', 'name' => $signup['full_name']];
+            $_SESSION['active_payment'] = ['reference' => $reference, 'type' => 'membership_signup', 'name' => $application['full_name']];
             if (!empty($result['checkoutLink'])) { header('Location: ' . $result['checkoutLink']); exit; }
             $_SESSION['flash'] = 'Membership payment request sent. Approve it on your phone; we will confirm it automatically.';
-            if ($user) { header('Location: /profile'); exit; }
-            header('Location: /membership-form/plans?id=' . $signupId . '&token=' . $token); exit;
+            header('Location: /profile'); exit;
         } catch (Throwable $e) { $_SESSION['flash'] = 'Payment could not start: ' . $e->getMessage(); header('Location: /membership-form/plans?id=' . (int)($_POST['id'] ?? 0) . '&token=' . urlencode((string)($_POST['token'] ?? ''))); exit; }
     }
     if ($action === 'donor_signup') {
@@ -564,11 +470,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $user = $_SESSION['user'] ?? null;
 $flash = $_SESSION['flash'] ?? null; unset($_SESSION['flash']);
 $activePayment = $_SESSION['active_payment'] ?? null;
-$public = ['/', '/about', '/contact', '/blog', '/members', '/trips', '/login', '/signup'];
+$public = ['/', '/about', '/contact', '/blog', '/trips', '/login', '/signup'];
 if (!$user && !in_array($path, $public, true)) {
     $_SESSION['flash'] = $path === '/donate'
         ? 'Please create an account or log in to support the mission.'
-        : ($path === '/membership-form' ? 'Please create an account or log in to become a member.' : 'Please log in to continue.');
+        : ($path === '/apply-membership' ? 'Please create an account or log in to become a member.' : 'Please log in to continue.');
     header('Location: /login?next=' . urlencode($path)); exit;
 }
 if ($path === '/admin' && (!$user || $user['role'] !== 'admin')) { header('Location: /login'); exit; }
@@ -591,7 +497,7 @@ function profile_src(?array $user): string { if (!$user) return ''; $base = app_
 function trip_poster_src(?string $poster): string { return $poster ? app_base_path().'/uploads/trips/'.basename($poster) : ''; }
 function trip_poster_markup(?string $poster, string $title): string { $src = trip_poster_src($poster); if (!$src) return ''; $safeSrc = e($src); $safeTitle = e($title); return strtolower(pathinfo((string)$poster, PATHINFO_EXTENSION)) === 'pdf' ? '<iframe class="trip-poster trip-poster-pdf" src="'.$safeSrc.'" title="'.$safeTitle.' poster"></iframe><a class="muted" href="'.$safeSrc.'" target="_blank" rel="noopener">Open poster in a new tab</a>' : '<img class="trip-poster" src="'.$safeSrc.'" alt="'.$safeTitle.' poster" loading="lazy">'; }
 function save_trip_poster(?array $file): ?string { if (!$file || empty($file['tmp_name'])) return null; if (($file['error'] ?? UPLOAD_ERR_OK) !== UPLOAD_ERR_OK || (int)($file['size'] ?? 0) > 8 * 1024 * 1024) throw new RuntimeException('Please upload a poster under 8 MB.'); $allowed = ['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp','application/pdf'=>'pdf']; $mime = (new finfo(FILEINFO_MIME_TYPE))->file($file['tmp_name']); if (!isset($allowed[$mime])) throw new RuntimeException('Poster must be JPG, PNG, WEBP, or PDF.'); $dir = __DIR__.'/uploads/trips'; if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) throw new RuntimeException('Trip upload folder could not be created.'); $name = 'trip-'.date('YmdHis').'-'.bin2hex(random_bytes(5)).'.'.$allowed[$mime]; if (!move_uploaded_file($file['tmp_name'], $dir.'/'.$name)) throw new RuntimeException('Poster upload failed.'); return $name; }
-function nav(string $current, ?array $user): void { $base=app_base_path(); $links=['/'=>'Home','/about'=>'About','/members'=>'Members','/trips'=>'Trips','/blog'=>'Blog','/contact'=>'Contact','/donate'=>'Donate']; echo '<header><div class="nav"><a class="brand" href="'.$base.'/"><img class="brand-logo" src="'.e(logo_url()).'" alt="Royal Family TZ logo"><span>Royal Family <small>Tanzania</small></span></a><input class="menu-checkbox" type="checkbox" id="mobile-menu"><label class="menu-toggle" for="mobile-menu" aria-label="Open menu">☰</label><nav data-mobile-nav>'; foreach($links as $href=>$label) echo '<a class="'.($current===$href?'active':'').'" href="'.e($base.$href).'">'.$label.'</a>'; if($user) echo '<a href="'.e($base.'/dashboard').'">Dashboard</a><a class="outline" href="'.e($base.'/logout').'">Log out</a>'; else echo '<a href="'.e($base.'/login').'">Log in</a>'; echo '</nav></div></header>'; }
+function nav(string $current, ?array $user): void { $base=app_base_path(); $links=['/'=>'Home','/about'=>'About','/trips'=>'Trips','/blog'=>'Blog','/contact'=>'Contact','/donate'=>'Donate']; echo '<header><div class="nav"><a class="brand" href="'.$base.'/"><img class="brand-logo" src="'.e(logo_url()).'" alt="Royal Family TZ logo"><span>Royal Family <small>Tanzania</small></span></a><input class="menu-checkbox" type="checkbox" id="mobile-menu"><label class="menu-toggle" for="mobile-menu" aria-label="Open menu">☰</label><nav data-mobile-nav>'; foreach($links as $href=>$label) echo '<a class="'.($current===$href?'active':'').'" href="'.e($base.$href).'">'.$label.'</a>'; if($user) echo '<a href="'.e($base.'/dashboard').'">Dashboard</a><a class="outline" href="'.e($base.'/logout').'">Log out</a>'; else echo '<a href="'.e($base.'/login').'">Log in</a>'; echo '</nav></div></header>'; }
 function layout(string $title, string $content, string $path, ?array $user, ?string $flash=null, string $description = "", string $ogImage = ""): void { global $activePayment; echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="description" content="'.e($description ?: 'Royal Family Tanzania - Empowering community, youth talent, and practical impact in Tanzania.').'">
     <meta name="keywords" content="Royal Family TZ, Tanzania, Community, Youth, Talent, Arusha, Impact, Donation, Charity">
@@ -656,42 +562,19 @@ $events = []; $notifications = [];
 if ($user) { try { ensure_community_tables(); $events = db()->query("SELECT title, description, event_date, location FROM events WHERE published = 1 ORDER BY event_date IS NULL, event_date ASC, created_at DESC LIMIT 6")->fetchAll(); $audienceSql = $user['role'] === 'admin' ? "('all','members','admins')" : "('all','members')"; $notifications = db()->query("SELECT title, message, created_at FROM notifications WHERE audience IN {$audienceSql} ORDER BY created_at DESC LIMIT 8")->fetchAll(); } catch (Throwable $e) {} }
 $content='';
 switch ($path) {
-case '/': $content='<section class="hero"><div><p class="eyebrow">Community • purpose • possibility</p><h1>A stronger Tanzania starts with us.</h1><p>Royal Family TZ brings people together to support community action and help young talent grow.</p><a class="btn" href="/membership-form">Become a member</a><a class="btn gold" href="/donate">Support the mission</a></div>'.gallery($homeImages,'Royal Family TZ community','hero-gallery').'</section><section class="section"><div class="center"><p class="eyebrow">What we believe</p><h2>Community with a clear purpose.</h2></div><div class="grid">'; foreach($features as $f) $content.='<article class="card"><div class="icon">✦</div><h3>'.e($f['title']).'</h3><p>'.e($f['body']).'</p></article>'; $content.='</div></section>'; break;
+case '/': $content='<section class="hero"><div><p class="eyebrow">Community • purpose • possibility</p><h1>A stronger Tanzania starts with us.</h1><p>Royal Family TZ brings people together to support community action and help young talent grow.</p><a class="btn" href="/apply-membership">Become a member</a><a class="btn gold" href="/donate">Support the mission</a></div>'.gallery($homeImages,'Royal Family TZ community','hero-gallery').'</section><section class="section"><div class="center"><p class="eyebrow">What we believe</p><h2>Community with a clear purpose.</h2></div><div class="grid">'; foreach($features as $f) $content.='<article class="card"><div class="icon">✦</div><h3>'.e($f['title']).'</h3><p>'.e($f['body']).'</p></article>'; $content.='</div></section>'; break;
 case '/about': $content='<div class="page"><p class="eyebrow">Our story</p><h1>About Royal Family TZ</h1><p class="lead">We are a Tanzanian community platform connecting people who believe that generosity, collaboration, and youth opportunity can change lives.</p>'.gallery($aboutImages,'Royal Family TZ community impact','about-gallery').'<div class="grid"><div class="card"><h3>Our Vision</h3><p>To become a trusted Tanzanian community foundation where generosity, youth talent, and practical opportunity create lasting transformation.</p></div><div class="card"><h3>Our Mission</h3><p>To create a dependable home for members, fund meaningful charity events, and build programs that let young Tanzanians discover and develop their talent.</p></div></div>'; break;
-case '/members':
-    $tierCards = '';
-    foreach ($tiers as $t) {
-        $priceRow = $t['monthly'] !== null
-            ? '<div class="plan-options"><div class="plan-btn" style="pointer-events:none"><small>Monthly</small><strong>TZS '.number_format($t['monthly']).'</strong></div><div class="plan-btn" style="pointer-events:none"><small>Yearly</small><strong>TZS '.number_format($t['yearly']).'</strong></div></div>'
-            : '<div class="plan-options"><div class="plan-btn" style="pointer-events:none;grid-column:1 / -1"><small>Yearly only</small><strong>TZS '.number_format($t['yearly']).'</strong></div></div>';
-        $tierCards .= '<article class="tier-card"><div class="tier-icon">'.$t['icon'].'</div><h3>'.e($t['name']).'</h3><span class="badge-chip '.e($t['badge_class']).'">'.$t['icon'].' '.e($t['badge']).'</span><p class="muted">You get: '.e($t['perk']).'</p>'.$priceRow.'</article>';
-    }
-    $content='<div class="page members-page"><p class="eyebrow">Join the movement</p><h1>Become a member.</h1><p class="lead">Every membership helps fund community events and youth-talent opportunities.</p><div class="tier-grid">'.$tierCards.'</div><div style="text-align:center;margin-top:24px"><a class="btn gold" href="/membership-form">Become a member</a></div><div class="card" style="margin-top:32px"><h3>Official Foundation registration</h3><p class="muted">Prefer to register as a formal Royal Family Foundation member (Founder, Ordinary, or Honorary) under our Constitution? This is a one-time Tsh 5,000 registration fee plus a Tsh 20,000 annual fee.</p><a class="btn" href="/apply-membership">Start official registration</a></div></div>';
-    break;
-case '/membership-form':
-    $content = '<div class="success-modal" id="membership-terms-modal"><div class="success-card terms-card"><h2>Foundation Membership Terms & Conditions</h2><div class="terms-body">'
-        . '<p>By becoming a Royal Family TZ member, you agree to the following:</p>'
-        . '<p>1. Membership fees (monthly or yearly, depending on your chosen tier) are used to fund community events, youth-talent programs, and Organization operations, and are non-refundable once payment is confirmed.</p>'
-        . '<p>2. Your membership ID card (Silver tier) or T-shirt and ID card (Gold tier) will be issued once your payment has been confirmed by our payment provider.</p>'
-        . '<p>3. Membership benefits are personal to you and may not be transferred to another person.</p>'
-        . '<p>4. You agree to conduct yourself respectfully at all Royal Family TZ events and community activities.</p>'
-        . '<p>5. Royal Family TZ may update membership benefits or pricing from time to time; continuing members will be notified of material changes.</p>'
-        . '<p>6. The information you provide in this form is accurate to the best of your knowledge, and will be used solely for membership administration and communication.</p>'
-        . '</div><label class="terms-agree"><input type="checkbox" id="membership-terms-agree">I have read and agree to the Foundation Membership Terms & Conditions.</label><button type="button" class="btn gold" id="membership-terms-continue" disabled style="width:100%">Continue</button></div></div>'
-        . '<script>(function(){var agree=document.getElementById("membership-terms-agree"),cont=document.getElementById("membership-terms-continue"),modal=document.getElementById("membership-terms-modal");agree.addEventListener("change",function(){cont.disabled=!agree.checked;});cont.addEventListener("click",function(){modal.hidden=true;var field=document.getElementById("agreed_terms_field");if(field)field.value="1";});})();</script>'
-        . '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>Become a member</h1><p class="lead">Tell us who you are, then choose your Silver or Gold membership plan.</p><div class="form-card"><form class="form" method="post"><input type="hidden" name="action" value="membership_signup_start"><input type="hidden" id="agreed_terms_field" name="agreed_terms" value="0"><label>Full name<input name="full_name" value="'.e($user['name'] ?? '').'" required></label><label>Email address<input type="email" name="email" value="'.e($user['email'] ?? '').'" required></label><div class="form-row"><label>Phone number<input name="phone" placeholder="0712345678" required></label><label>WhatsApp number<input name="whatsapp" placeholder="0712345678"></label></div><div class="form-row"><label>Gender<select name="gender" required><option value="">Select</option><option>Male</option><option>Female</option></select></label><label>City / region<input name="city_region" placeholder="e.g. Arusha" required></label></div><button class="btn gold" type="submit">Continue to plans</button></form></div></div>';
-    break;
 case '/membership-form/plans':
-    ensure_membership_signups_table();
-    $signupId = (int)($_GET['id'] ?? 0);
-    $signupToken = (string)($_GET['token'] ?? '');
-    $signupStmt = db()->prepare('SELECT * FROM membership_signups WHERE id = ? AND access_token = ? LIMIT 1');
-    $signupStmt->execute([$signupId, $signupToken]);
-    $signupRow = $signupStmt->fetch();
-    if (!$signupRow) { $content = '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>Session not found.</h1><p class="lead">Please fill in the membership form again.</p><a class="btn" href="/membership-form">Back to form</a></div>'; break; }
-    if ($signupRow['status'] === 'paid') {
-        $paidTier = tier_by_key($tiers, (string)$signupRow['tier_key']);
-        $content = '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>You are already a member!</h1><p class="lead">Thank you, '.e($signupRow['full_name']).'. Your '.e($paidTier['name'] ?? 'membership').' is confirmed.</p><p><strong>Membership ID:</strong> '.e($signupRow['membership_id']).'</p></div>';
+    ensure_membership_applications_table();
+    $applicationId = (int)($_GET['id'] ?? 0);
+    $accessToken = (string)($_GET['token'] ?? '');
+    $appStmt = db()->prepare('SELECT * FROM membership_applications WHERE id = ? AND access_token = ? LIMIT 1');
+    $appStmt->execute([$applicationId, $accessToken]);
+    $application = $appStmt->fetch();
+    if (!$application) { $content = '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>Registration not found.</h1><p class="lead">Please submit the registration form again.</p><a class="btn" href="/apply-membership">Back to registration</a></div>'; break; }
+    if ($application['status'] === 'paid') {
+        $paidTier = tier_by_key($tiers, (string)$application['tier_key']);
+        $content = '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>You are already a member!</h1><p class="lead">Thank you, '.e($application['full_name']).'. Your '.e($paidTier['name'] ?? 'membership').' is confirmed.</p><p><strong>Membership ID:</strong> '.e($application['membership_id']).'</p></div>';
         break;
     }
     $planCards = '';
@@ -702,20 +585,30 @@ case '/membership-form/plans':
             ? '<div class="plan-cta-group"><button type="submit" name="cycle" value="monthly" class="plan-cta"><span class="cta-label">Pay monthly</span><span class="cta-price">TZS '.number_format($t['monthly']).'</span></button><button type="submit" name="cycle" value="yearly" class="plan-cta"><span class="cta-label">Pay yearly</span><span class="cta-price">TZS '.number_format($t['yearly']).'</span></button></div>'
             : '<div class="plan-cta-group"><button type="submit" name="cycle" value="yearly" class="plan-cta"><span class="cta-label">Pay yearly (only option)</span><span class="cta-price">TZS '.number_format($t['yearly']).'</span></button></div>';
         $planCards .= '<article class="plan-card '.$accent.'">'.$ribbon.'<div class="plan-card-icon">'.$t['icon'].'</div><h3>'.e($t['name']).'</h3><span class="badge-chip '.e($t['badge_class']).'">'.$t['icon'].' '.e($t['badge']).'</span><p class="perk">You get: '.e($t['perk']).'</p><form method="post">'
-            . '<input type="hidden" name="action" value="membership_signup_pay"><input type="hidden" name="id" value="'.$signupId.'"><input type="hidden" name="token" value="'.e($signupToken).'"><input type="hidden" name="tier_key" value="'.e($t['key']).'"><input type="hidden" name="phone" value="'.e($signupRow['phone']).'"><div class="plan-method"><span class="plan-method-label">Payment method</span><select name="method"><option value="mpesa">Vodacom M-Pesa</option><option value="tigopesa">Tigo Pesa / Mixx</option><option value="airtelmoney">Airtel Money</option><option value="halopesa">Halopesa</option><option value="card">Credit / Debit Card</option></select></div>'
+            . '<input type="hidden" name="action" value="membership_signup_pay"><input type="hidden" name="id" value="'.$applicationId.'"><input type="hidden" name="token" value="'.e($accessToken).'"><input type="hidden" name="tier_key" value="'.e($t['key']).'"><input type="hidden" name="phone" value="'.e($application['phone']).'"><div class="plan-method"><span class="plan-method-label">Payment method</span><select name="method"><option value="mpesa">Vodacom M-Pesa</option><option value="tigopesa">Tigo Pesa / Mixx</option><option value="airtelmoney">Airtel Money</option><option value="halopesa">Halopesa</option><option value="card">Credit / Debit Card</option></select></div>'
             . $cycleOptions . '</form></article>';
     }
-    $content = '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>Choose your plan, '.e($signupRow['full_name']).'</h1><p class="lead">Pick Silver or Gold, and monthly or yearly billing. You will confirm your mobile money payment next.</p><div class="plan-grid">'.$planCards.'</div></div>';
+    $content = '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>Choose your plan, '.e($application['full_name']).'</h1><p class="lead">Pick Silver or Gold, and monthly or yearly billing. You will confirm your mobile money payment next.</p><div class="plan-grid">'.$planCards.'</div></div>';
     break;
 case '/apply-membership':
-    $content = '<div class="page"><p class="eyebrow">Royal Family Foundation</p><h1>Official membership registration</h1><p class="lead">"Not Related by Blood, United by Dreams" — complete this form to register as a Founder, Ordinary, or Honorary member. A Tsh 5,000 registration fee and Tsh 20,000 annual fee apply to every category.</p><div class="form-card"><form class="form" method="post"><input type="hidden" name="action" value="apply_membership">'
+    $content = '<div class="success-modal" id="membership-terms-modal"><div class="success-card terms-card"><h2>Foundation Membership Terms & Conditions</h2><div class="terms-body">'
+        . '<p>By becoming a Royal Family member, you agree to the following:</p>'
+        . '<p>1. Membership fees (monthly or yearly, depending on your chosen Silver or Gold plan) are used to fund community events, youth-talent programs, and Organization operations, and are non-refundable once payment is confirmed.</p>'
+        . '<p>2. Your membership ID card (Silver tier) or T-shirt and ID card (Gold tier) will be issued once your payment has been confirmed by our payment provider.</p>'
+        . '<p>3. Membership benefits are personal to you and may not be transferred to another person.</p>'
+        . '<p>4. You agree to conduct yourself respectfully at all Royal Family TZ events and community activities.</p>'
+        . '<p>5. Royal Family TZ may update membership benefits or pricing from time to time; continuing members will be notified of material changes.</p>'
+        . '<p>6. The information you provide in this form is accurate to the best of your knowledge, and will be used solely for membership administration and communication.</p>'
+        . '</div><label class="terms-agree"><input type="checkbox" id="membership-terms-agree">I have read and agree to the Foundation Membership Terms & Conditions.</label><button type="button" class="btn gold" id="membership-terms-continue" disabled style="width:100%">Continue</button></div></div>'
+        . '<script>(function(){var agree=document.getElementById("membership-terms-agree"),cont=document.getElementById("membership-terms-continue"),modal=document.getElementById("membership-terms-modal");agree.addEventListener("change",function(){cont.disabled=!agree.checked;});cont.addEventListener("click",function(){modal.hidden=true;var field=document.getElementById("agreed_terms_field");if(field)field.value="1";});})();</script>'
+        . '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>Official membership registration</h1><p class="lead">"Not Related by Blood, United by Dreams" — complete this form, then choose your Silver or Gold membership plan.</p><div class="form-card"><form class="form" method="post"><input type="hidden" name="action" value="apply_membership"><input type="hidden" id="agreed_terms_field" name="agreed_terms" value="0">'
         . '<h3>A. Personal information (must be 18 years or above)</h3>'
-        . '<div class="form-row"><label>Full legal name (first, middle, surname)<input name="full_name" required></label><label>Date of birth<input type="date" name="date_of_birth" required></label></div>'
+        . '<div class="form-row"><label>Full legal name (first, middle, surname)<input name="full_name" value="'.e($user['name'] ?? '').'" required></label><label>Date of birth<input type="date" name="date_of_birth" required></label></div>'
         . '<div class="form-row"><label>Gender<select name="gender" required><option value="">Select</option><option>Male</option><option>Female</option></select></label><label>Nationality<input name="nationality" required></label></div>'
         . '<label>NIDA / ID number<input name="nida_number"></label>'
         . '<h3>B. Contact details & location</h3>'
         . '<div class="form-row"><label>Phone number (primary)<input name="phone" placeholder="0712345678" required></label><label>WhatsApp number<input name="whatsapp" placeholder="0712345678"></label></div>'
-        . '<div class="form-row"><label>Email address<input type="email" name="email" required></label><label>City / region of residence<input name="city_region" required></label></div>'
+        . '<div class="form-row"><label>Email address<input type="email" name="email" value="'.e($user['email'] ?? '').'" required></label><label>City / region of residence<input name="city_region" required></label></div>'
         . '<label>District & street / ward address<input name="district_address"></label>'
         . '<h3>C. Membership category</h3>'
         . '<div class="amount-grid"><div class="amount-chip"><input type="radio" name="category" value="Founder Member" id="cat-founder" required><label for="cat-founder">Founder Member</label></div><div class="amount-chip"><input type="radio" name="category" value="Ordinary Member" id="cat-ordinary"><label for="cat-ordinary">Ordinary Member</label></div><div class="amount-chip"><input type="radio" name="category" value="Honorary Member" id="cat-honorary"><label for="cat-honorary">Honorary Member</label></div></div>'
@@ -726,59 +619,8 @@ case '/apply-membership':
         . '<div class="form-row"><label>Emergency contact person name<input name="emergency_name"></label><label>Relationship to applicant<input name="emergency_relationship"></label></div>'
         . '<div class="form-row"><label>Phone number<input name="emergency_phone"></label><label>City / residence<input name="emergency_city"></label></div>'
         . '<h3>E. Member declaration & commitment</h3>'
-        . '<label style="display:flex;align-items:flex-start;gap:10px;font-weight:400"><input type="checkbox" name="agreed_constitution" value="1" required style="width:auto;margin-top:4px">I confirm I am 18 years of age or older and of sound mind, that all information provided is accurate, and I have read and agree to uphold the Vision, Mission, Objectives, and Constitution of the Royal Family Foundation, including the Registration Fee (Tsh 5,000) and Annual Fee (Tsh 20,000).</label>'
-        . '<button class="btn gold" type="submit">Submit registration</button></form></div></div>';
-    break;
-case '/apply-membership/pay':
-    ensure_membership_applications_table();
-    $applicationId = (int)($_GET['id'] ?? 0);
-    $accessToken = (string)($_GET['token'] ?? '');
-    $appStmt = db()->prepare('SELECT * FROM membership_applications WHERE id = ? AND access_token = ? LIMIT 1');
-    $appStmt->execute([$applicationId, $accessToken]);
-    $application = $appStmt->fetch();
-    if (!$application) { $content = '<div class="page"><p class="eyebrow">Royal Family Foundation</p><h1>Registration not found.</h1><p class="lead">Please submit the registration form again.</p><a class="btn" href="/apply-membership">Back to registration</a></div>'; break; }
-    if ($application['status'] === 'paid') {
-        $content = '<div class="page"><p class="eyebrow">Royal Family Foundation</p><h1>You are already a member!</h1><p class="lead">Thank you, '.e($application['full_name']).'. Your '.e($application['category']).' registration is confirmed.</p><p><strong>Membership ID:</strong> '.e($application['membership_id']).'</p></div>';
-        break;
-    }
-    $content = '<div class="page"><p class="eyebrow">Royal Family Foundation</p><h1>Confirm and pay</h1><div class="form-card"><div class="plan-summary"><h2>'.e($application['full_name']).'</h2><p class="muted">Category: '.e($application['category']).'</p><p class="muted">Registration fee: TZS 5,000 &nbsp;+&nbsp; Annual fee: TZS 20,000 &nbsp;=&nbsp; <strong>Total TZS 25,000</strong></p></div><form class="form" method="post" data-payment-reference="'.e((string)($application['order_reference'] ?? '')).'"><input type="hidden" name="action" value="pay_membership_fee"><input type="hidden" name="id" value="'.(int)$application['id'].'"><input type="hidden" name="token" value="'.e($accessToken).'"><label>Mobile number<input name="phone" value="'.e($application['phone']).'" placeholder="0712345678" required></label><label>Choose payment method</label>
-<div class="payment-grid">
-    <div class="payment-option">
-        <input type="radio" name="method" value="mpesa" id="m-mpesa" checked>
-        <label for="m-mpesa">
-            <img src="'.e(app_base_path()).'/assets/payments/mpesa.png" class="payment-logo" alt="M-Pesa">
-            <span>Vodacom M-Pesa</span>
-        </label>
-    </div>
-    <div class="payment-option">
-        <input type="radio" name="method" value="tigopesa" id="m-tigo">
-        <label for="m-tigo">
-            <img src="'.e(app_base_path()).'/assets/payments/tigopesa.png" class="payment-logo" alt="Tigo Pesa">
-            <span>Tigo Pesa / Mixx</span>
-        </label>
-    </div>
-    <div class="payment-option">
-        <input type="radio" name="method" value="airtelmoney" id="m-airtel">
-        <label for="m-airtel">
-            <img src="'.e(app_base_path()).'/assets/payments/airtelmoney.png" class="payment-logo" alt="Airtel Money">
-            <span>Airtel Money</span>
-        </label>
-    </div>
-    <div class="payment-option">
-        <input type="radio" name="method" value="halopesa" id="m-halo">
-        <label for="m-halo">
-            <img src="'.e(app_base_path()).'/assets/payments/halopesa.png" class="payment-logo" alt="Halopesa">
-            <span>Halopesa</span>
-        </label>
-    </div>
-    <div class="payment-option" style="grid-column: 1 / -1">
-        <input type="radio" name="method" value="card" id="m-card">
-        <label for="m-card">
-            <span>Credit / Debit Card</span>
-            <small class="muted">Powered by ClickPesa</small>
-        </label>
-    </div>
-</div><button class="btn gold" type="submit">Pay TZS 25,000</button></form></div></div>';
+        . '<label style="display:flex;align-items:flex-start;gap:10px;font-weight:400"><input type="checkbox" name="agreed_constitution" value="1" required style="width:auto;margin-top:4px">I confirm I am 18 years of age or older and of sound mind, and that all information provided is accurate.</label>'
+        . '<button class="btn gold" type="submit">Continue to plans</button></form></div></div>';
     break;
 	case '/trips': $tripCards=''; try { ensure_trip_tables(); $tripRows=db()->query('SELECT id, title, description, destination, trip_date, meeting_point, poster_image FROM trips WHERE published = 1 ORDER BY trip_date IS NULL, trip_date ASC, created_at DESC')->fetchAll(); foreach($tripRows as $trip) { $ps=db()->prepare('SELECT id, name, description, price, capacity FROM trip_packages WHERE trip_id = ? ORDER BY price ASC'); $ps->execute([$trip['id']]); $packages=$ps->fetchAll(); $packageHtml=''; foreach($packages as $package) $packageHtml.='<article class="card"><h3>'.e($package['name']).'</h3><h2>TZS '.number_format((float)$package['price']).'</h2><p>'.e($package['description']).'</p><p class="muted">'.($package['capacity']?'Limited places: '.e((string)$package['capacity']):'Open places').'</p>'.($user?'<form class="form" method="post"><input type="hidden" name="action" value="trip_book"><input type="hidden" name="trip_id" value="'.(int)$trip['id'].'"><input type="hidden" name="package_id" value="'.(int)$package['id'].'"><label>Guests<input type="number" name="guests" min="1" value="1" required></label><label>Mobile number<input name="phone" placeholder="0712345678" required></label><label>Payment method<select name="method"><option value="mobile">Mobile Money</option><option value="card">Card checkout</option></select></label><button class="btn gold" type="submit">Book and pay</button></form>':'<a class="btn" href="/login">Log in to book</a>').'</article>'; $poster = trip_poster_markup($trip['poster_image'] ?? null, (string)$trip['title']); $tripCards.='<section class="card">'.$poster.'<p class="eyebrow">'.e($trip['destination']).'</p><h2>'.e($trip['title']).'</h2><p>'.e($trip['description']).'</p><p class="muted">'.($trip['trip_date']?'Date: '.e(date('M j, Y', strtotime($trip['trip_date']))).' · ':'').e($trip['meeting_point'] ?? '').'</p><div class="grid">'.$packageHtml.'</div></section>'; } } catch (Throwable $e) { $tripCards='<div class="card"><p>Trips are not available yet. Please check the database setup.</p></div>'; } $content='<div class="page"><p class="eyebrow">Travel together</p><h1>Community trips</h1><p class="lead">Choose a trip package, enter your phone number, and pay securely through ClickPesa.</p>'.$tripCards.'</div>'; break;
 case '/blog': $content='<div class="page"><p class="eyebrow">Stories and updates</p><h1>Blog & videos</h1><p class="lead">Ideas, events, and stories from the Royal Family TZ community.</p><div class="card youtube-card"><div class="youtube-mark">YouTube</div><h3>Watch Royal Family TZ</h3><p class="muted">Follow our community stories, charity activities, youth talent, and events on the official Royal Family TZ media channel.</p><div class="social-row"><a class="social-btn youtube" href="https://youtube.com/@royalfamilytz-media?si=BcIVW6FbDE4sa9A3" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M23.5 6.2s-.2-1.6-.9-2.3c-.9-.9-1.9-.9-2.4-1C16.9 2.6 12 2.6 12 2.6s-4.9 0-8.2.3c-.5.1-1.5.1-2.4 1C.7 4.6.5 6.2.5 6.2S.2 8.1.2 10v1.9c0 1.9.3 3.8.3 3.8s.2 1.6.9 2.3c.9.9 2.1.9 2.6 1 1.9.2 8 .3 8 .3s4.9 0 8.2-.3c.5-.1 1.5-.1 2.4-1 .7-.7.9-2.3.9-2.3s.3-1.9.3-3.8V10c0-1.9-.3-3.8-.3-3.8zM9.7 14.3V7.6l6.4 3.4-6.4 3.3z"/></svg><span>YouTube</span></a><a class="social-btn instagram" href="https://www.instagram.com/royalfamilytz?igsh=czZoaXV2OTIwbjVy" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 2 .2 2.4.4.6.2 1 .6 1.5 1 .4.4.7.9 1 1.5.2.5.3 1.2.4 2.4.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.2 2-.4 2.4-.2.6-.6 1-1 1.5-.4.4-.9.7-1.5 1-.5.2-1.2.3-2.4.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-2-.2-2.4-.4-.6-.2-1-.6-1.5-1-.4-.4-.7-.9-1-1.5-.2-.5-.3-1.2-.4-2.4-.1-1.3-.1-1.7-.1-4.9s0-3.6.1-4.9c.1-1.2.2-2 .4-2.4.2-.6.6-1 1-1.5.4-.4.9-.7 1.5-1 .5-.2 1.2-.3 2.4-.4C8.4 2.2 8.8 2.2 12 2.2zm0 1.8c-3.1 0-3.5 0-4.7.1-1 .1-1.6.2-2 .3-.5.2-.8.4-1.2.8-.4.4-.6.7-.8 1.2-.1.4-.3 1-.3 2-.1 1.2-.1 1.6-.1 4.7s0 3.5.1 4.7c.1 1 .2 1.6.3 2 .2.5.4.8.8 1.2.4.4.7.6 1.2.8.4.1 1 .3 2 .3 1.2.1 1.6.1 4.7.1s3.5 0 4.7-.1c1-.1 1.6-.2 2-.3.5-.2.8-.4 1.2-.8.4-.4.6-.7.8-1.2.1-.4.3-1 .3-2 .1-1.2.1-1.6.1-4.7s0-3.5-.1-4.7c-.1-1-.2-1.6-.3-2-.2-.5-.4-.8-.8-1.2-.4-.4-.7-.6-1.2-.8-.4-.1-1-.3-2-.3-1.2-.1-1.6-.1-4.7-.1zm0 3.5a4.5 4.5 0 110 9 4.5 4.5 0 010-9zm0 1.8a2.7 2.7 0 100 5.4 2.7 2.7 0 000-5.4zm5.7-3.2a1.1 1.1 0 110 2.1 1.1 1.1 0 010-2.1z"/></svg><span>Instagram</span></a><a class="social-btn tiktok" href="https://www.tiktok.com/@royalfamilytz?_r=1&amp;_t=ZS-98wVB63J0Sq" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M16.5 2h-2.9v13.7c0 1.4-1.1 2.5-2.5 2.5s-2.5-1.1-2.5-2.5 1.1-2.5 2.5-2.5c.3 0 .5 0 .8.1V10c-.3 0-.5-.1-.8-.1-3 0-5.4 2.4-5.4 5.4s2.4 5.4 5.4 5.4 5.4-2.4 5.4-5.4V8.6c1.1.8 2.4 1.3 3.9 1.3V6.8c-2.1 0-3.9-1.6-3.9-4.8z"/></svg><span>TikTok</span></a></div></div><div class="card"><h3>Welcome to Royal Family TZ</h3><p class="muted">Our latest stories are coming soon. Check back for community news, charity events, and youth talent features.</p></div></div>'; break;
@@ -886,7 +728,7 @@ case '/support/pay':
     break;
 case '/login': $nextParam = (string)($_GET['next'] ?? ''); $content='<div class="page"><div class="form-card"><p class="eyebrow">Welcome back</p><h2>Log in</h2><a class="google-btn" href="'.e(app_base_path()).'/auth/google/start"><span class="google-icon" aria-hidden="true">G</span> Continue with Google</a><div class="or">or use email</div><form class="form" method="post"><input type="hidden" name="action" value="login"><input type="hidden" name="next" value="'.e($nextParam).'"><label>Email<input type="email" name="email" required></label><label>Password<input type="password" name="password" required></label><button class="btn" type="submit">Log in</button></form><p>New here? <a href="/signup'.($nextParam ? '?next=' . rawurlencode($nextParam) : '').'"><u>Sign up</u></a></p></div></div>'; break;
 case '/signup': $nextParam = (string)($_GET['next'] ?? ''); $content='<div class="page"><div class="form-card"><p class="eyebrow">Start your journey</p><h2>Create your account</h2><a class="google-btn" href="'.e(app_base_path()).'/auth/google/start"><span class="google-icon" aria-hidden="true">G</span> Sign up with Google</a><div class="or">or create an account with email</div><form class="form" method="post" enctype="application/x-www-form-urlencoded"><input type="hidden" name="action" value="signup"><input type="hidden" name="next" value="'.e($nextParam).'"><label>Full name<input name="name" required></label><label>Email<input type="email" name="email" required></label><label>Password<input type="password" name="password" minlength="6" required></label><button class="btn" type="submit">Sign up</button></form><p>Already have an account? <a href="/login'.($nextParam ? '?next=' . rawurlencode($nextParam) : '').'"><u>Log in</u></a></p></div></div>'; break;
-case '/dashboard': $dashAvatar = profile_src($user); $dashPhoto = $dashAvatar ? '<img class="dashboard-avatar" src="'.e($dashAvatar).'" alt="Profile photo of '.e($user['name']).'">' : '<div class="dashboard-avatar dashboard-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>'; $eventCards=''; foreach($events as $event) $eventCards.='<article class="card"><p class="eyebrow">Upcoming event</p><h3>'.e($event['title']).'</h3><p>'.e($event['description']).'</p><p class="muted">'.e($event['location'] ?? '').($event['event_date']?' · '.e(date('M j, Y g:i A', strtotime($event['event_date']))):'').'</p></article>'; $noticeCards=''; foreach($notifications as $notice) $noticeCards.='<article class="card"><p class="eyebrow">Notification</p><h3>'.e($notice['title']).'</h3><p>'.e($notice['message']).'</p><p class="muted">'.e(date('M j, Y', strtotime($notice['created_at']))).'</p></article>'; $dashBadge = badge_display($user['membership_badge'] ?? null); $membershipStat = $user['membership'] ? '<span class="badge-chip badge-'.e($user['membership_badge'] ?? '').'">'.$dashBadge['icon'].' '.e($dashBadge['label']).'</span>'.($user['membership_id']?'<br><small class="muted">'.e($user['membership_id']).'</small>':'') : '—'; $content='<div class="page"><div class="dashboard-welcome">'.$dashPhoto.'<div><p class="eyebrow">Member space</p><h1>Welcome, '.e($user['name']).'</h1><p class="muted">Your profile photo appears here after you add it from your profile page.</p></div></div><div class="stats"><div class="stat"><strong>'.$membershipStat.'</strong><span>Membership status</span></div><div class="stat"><strong>'.count($events).'</strong><span>Upcoming events</span></div><div class="stat"><strong>'.count($notifications).'</strong><span>Notifications</span></div></div><section class="section"><p class="eyebrow">Stay connected</p><h2>Events and updates</h2><div class="grid">'.($eventCards ?: '<article class="card"><p class="muted">No upcoming events yet.</p></article>').($noticeCards ?: '<article class="card"><p class="muted">No new notifications.</p></article>').'</div></section><div class="grid"><article class="card"><h3>Your profile</h3><p>'.e($user['email']).'</p><a class="btn" href="/profile">Edit profile</a></article><article class="card"><h3>Grow with us</h3><p>Activate your membership and join the next community experience.</p><a class="btn gold" href="/members">Choose a plan</a></article></div></div>'; break;
+case '/dashboard': $dashAvatar = profile_src($user); $dashPhoto = $dashAvatar ? '<img class="dashboard-avatar" src="'.e($dashAvatar).'" alt="Profile photo of '.e($user['name']).'">' : '<div class="dashboard-avatar dashboard-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>'; $eventCards=''; foreach($events as $event) $eventCards.='<article class="card"><p class="eyebrow">Upcoming event</p><h3>'.e($event['title']).'</h3><p>'.e($event['description']).'</p><p class="muted">'.e($event['location'] ?? '').($event['event_date']?' · '.e(date('M j, Y g:i A', strtotime($event['event_date']))):'').'</p></article>'; $noticeCards=''; foreach($notifications as $notice) $noticeCards.='<article class="card"><p class="eyebrow">Notification</p><h3>'.e($notice['title']).'</h3><p>'.e($notice['message']).'</p><p class="muted">'.e(date('M j, Y', strtotime($notice['created_at']))).'</p></article>'; $dashBadge = badge_display($user['membership_badge'] ?? null); $membershipStat = $user['membership'] ? '<span class="badge-chip badge-'.e($user['membership_badge'] ?? '').'">'.$dashBadge['icon'].' '.e($dashBadge['label']).'</span>'.($user['membership_id']?'<br><small class="muted">'.e($user['membership_id']).'</small>':'') : '—'; $content='<div class="page"><div class="dashboard-welcome">'.$dashPhoto.'<div><p class="eyebrow">Member space</p><h1>Welcome, '.e($user['name']).'</h1><p class="muted">Your profile photo appears here after you add it from your profile page.</p></div></div><div class="stats"><div class="stat"><strong>'.$membershipStat.'</strong><span>Membership status</span></div><div class="stat"><strong>'.count($events).'</strong><span>Upcoming events</span></div><div class="stat"><strong>'.count($notifications).'</strong><span>Notifications</span></div></div><section class="section"><p class="eyebrow">Stay connected</p><h2>Events and updates</h2><div class="grid">'.($eventCards ?: '<article class="card"><p class="muted">No upcoming events yet.</p></article>').($noticeCards ?: '<article class="card"><p class="muted">No new notifications.</p></article>').'</div></section><div class="grid"><article class="card"><h3>Your profile</h3><p>'.e($user['email']).'</p><a class="btn" href="/profile">Edit profile</a></article><article class="card"><h3>Grow with us</h3><p>Activate your membership and join the next community experience.</p><a class="btn gold" href="/apply-membership">Choose a plan</a></article></div></div>'; break;
 case '/profile':
     try {
         ensure_membership_badge_column();
@@ -897,7 +739,7 @@ case '/profile':
     } catch (Throwable $e) {}
     $avatar = profile_src($user);
     $cardBadge = badge_display($user['membership_badge'] ?? null);
-    $membershipCard = !empty($user['membership']) ? '<div class="membership-card"><div class="membership-card-top"><span class="badge-chip '.e('badge-' . ($user['membership_badge'] ?? '')).'">'.$cardBadge['icon'].' '.e($cardBadge['label']).'</span></div><div class="membership-card-body">'.($avatar ? '<img class="membership-card-photo" src="'.e($avatar).'" alt="Profile photo">' : '<div class="membership-card-photo membership-card-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>').'<div><h3>'.e($user['name']).'</h3><p>Royal Family TZ Member</p><p class="membership-card-id">'.e($user['membership_id'] ?: 'ID pending confirmation').'</p></div></div></div>' : '<div class="card"><p class="muted">You are not an active member yet.</p><a class="btn gold" href="/members">Become a member</a></div>';
+    $membershipCard = !empty($user['membership']) ? '<div class="membership-card"><div class="membership-card-top"><span class="badge-chip '.e('badge-' . ($user['membership_badge'] ?? '')).'">'.$cardBadge['icon'].' '.e($cardBadge['label']).'</span></div><div class="membership-card-body">'.($avatar ? '<img class="membership-card-photo" src="'.e($avatar).'" alt="Profile photo">' : '<div class="membership-card-photo membership-card-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>').'<div><h3>'.e($user['name']).'</h3><p>Royal Family TZ Member</p><p class="membership-card-id">'.e($user['membership_id'] ?: 'ID pending confirmation').'</p></div></div></div>' : '<div class="card"><p class="muted">You are not an active member yet.</p><a class="btn gold" href="/apply-membership">Become a member</a></div>';
     $ticketCards = '';
     try {
         ensure_ticket_column();
@@ -911,55 +753,6 @@ case '/profile':
     } catch (Throwable $e) {}
     $ticketsSection = $ticketCards ? '<section class="section"><p class="eyebrow">Your tickets</p><h2>Digital tickets</h2><div class="ticket-grid">'.$ticketCards.'</div></section>' : '';
     $content='<div class="page"><section class="section" style="margin-top:0"><p class="eyebrow">Member details</p><h2>Your membership card</h2>'.$membershipCard.'</section>'.$ticketsSection.'<div class="form-card"><p class="eyebrow">Member details</p><h2>Your profile</h2><div class="avatar-picker">'.($avatar?'<img class="profile-avatar" src="'.e($avatar).'" alt="Profile photo">':'<div class="profile-placeholder">'.e(strtoupper(substr($user['name'],0,1))).'</div>').'<label class="camera-button" for="profile_image" title="Add or change profile photo" aria-label="Add or change profile photo">&#128247;</label></div><p class="photo-hint">Tap the camera icon to add or change your photo.</p><form class="form" method="post" enctype="multipart/form-data"><input type="hidden" name="action" value="profile_update"><label>Display name<input name="name" value="'.e($user['name']).'" required></label><label>Email<input value="'.e($user['email']).'" disabled></label><label>Bio<textarea name="bio" rows="4" placeholder="Tell the community about yourself"></textarea></label><input id="profile_image" class="visually-hidden" type="file" name="profile_image" accept="image/jpeg,image/png,image/webp" onchange="this.form.submit()"><button class="btn" type="submit">Save profile</button></form></div></div>'; break;
-case '/subscribe':
-    if (!$user) { header('Location: /login'); exit; }
-    $selectedTier = tier_by_key($tiers, (string)($_GET['tier'] ?? ''));
-    $selectedCycle = ($_GET['cycle'] ?? 'monthly') === 'yearly' ? 'yearly' : 'monthly';
-    if (!$selectedTier) {
-        $content = '<div class="page"><p class="eyebrow">Membership</p><h1>Choose a plan first.</h1><p class="lead">Pick a membership level on the Members page, then come back here to pay.</p><a class="btn gold" href="/members">View membership options</a></div>';
-        break;
-    }
-    $planAmount = (int)$selectedTier[$selectedCycle];
-    $cycleLabel = $selectedCycle === 'yearly' ? 'year' : 'month';
-    $content = '<div class="page"><p class="eyebrow">Membership</p><h1>Confirm your plan.</h1><div class="form-card"><div class="plan-summary"><span class="badge-chip '.e($selectedTier['badge_class']).'">'.$selectedTier['icon'].' '.e($selectedTier['badge']).'</span><h2>'.e($selectedTier['name']).'</h2><p class="muted">TZS '.number_format($planAmount).' / '.$cycleLabel.' — '.e($selectedTier['text']).'</p><a class="muted" href="/members">Change plan</a></div><form class="form" method="post"><input type="hidden" name="action" value="subscribe"><input type="hidden" name="tier_key" value="'.e($selectedTier['key']).'"><input type="hidden" name="cycle" value="'.e($selectedCycle).'"><label>Mobile number<input name="phone" placeholder="0712345678" required></label><label>Choose payment method</label>
-<div class="payment-grid">
-    <div class="payment-option">
-        <input type="radio" name="method" value="mpesa" id="m-mpesa" checked>
-        <label for="m-mpesa">
-            <img src="'.e(app_base_path()).'/assets/payments/mpesa.png" class="payment-logo" alt="M-Pesa">
-            <span>Vodacom M-Pesa</span>
-        </label>
-    </div>
-    <div class="payment-option">
-        <input type="radio" name="method" value="tigopesa" id="m-tigo">
-        <label for="m-tigo">
-            <img src="'.e(app_base_path()).'/assets/payments/tigopesa.png" class="payment-logo" alt="Tigo Pesa">
-            <span>Tigo Pesa / Mixx</span>
-        </label>
-    </div>
-    <div class="payment-option">
-        <input type="radio" name="method" value="airtelmoney" id="m-airtel">
-        <label for="m-airtel">
-            <img src="'.e(app_base_path()).'/assets/payments/airtelmoney.png" class="payment-logo" alt="Airtel Money">
-            <span>Airtel Money</span>
-        </label>
-    </div>
-    <div class="payment-option">
-        <input type="radio" name="method" value="halopesa" id="m-halo">
-        <label for="m-halo">
-            <img src="'.e(app_base_path()).'/assets/payments/halopesa.png" class="payment-logo" alt="Halopesa">
-            <span>Halopesa</span>
-        </label>
-    </div>
-    <div class="payment-option" style="grid-column: 1 / -1">
-        <input type="radio" name="method" value="card" id="m-card">
-        <label for="m-card">
-            <span>Credit / Debit Card</span>
-            <small class="muted">Powered by ClickPesa</small>
-        </label>
-    </div>
-</div><button class="btn gold" type="submit">Pay TZS '.number_format($planAmount).' and join</button></form></div></div>';
-    break;
 case '/admin':
     $active = $revenue = $posts = 0; $clickReady = cp_config('CLICKPESA_CLIENT_ID') !== '' && cp_config('CLICKPESA_API_KEY') !== '';
     $tripAdmin = ''; try { ensure_community_tables(); ensure_trip_tables(); $active = (int)db()->query('SELECT COUNT(*) FROM users WHERE membership_active = 1')->fetchColumn(); $revenue = (float)db()->query("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE status = 'paid'")->fetchColumn(); $posts = (int)db()->query('SELECT COUNT(*) FROM blog_posts')->fetchColumn(); foreach (db()->query('SELECT id, title, destination, trip_date FROM trips ORDER BY created_at DESC') as $adminTrip) $tripAdmin .= '<div class="trip-admin-row"><span><strong>'.e($adminTrip['title']).'</strong><small>'.e($adminTrip['destination']).($adminTrip['trip_date']?' · '.e($adminTrip['trip_date']):'').'</small></span><span><a class="btn" href="/admin/trip-edit?id='.(int)$adminTrip['id'].'">Edit</a><form method="post" style="display:inline" onsubmit="return confirm(\'Delete this trip and its packages?\')"><input type="hidden" name="action" value="trip_delete"><input type="hidden" name="trip_id" value="'.(int)$adminTrip['id'].'"><button class="btn danger" type="submit">Delete</button></form></span></div>'; } catch (Throwable $e) {}
