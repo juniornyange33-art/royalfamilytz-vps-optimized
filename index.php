@@ -661,7 +661,51 @@ case '/membership-form/plans':
             . '<input type="hidden" name="action" value="membership_signup_pay"><input type="hidden" name="id" value="'.$applicationId.'"><input type="hidden" name="token" value="'.e($accessToken).'"><input type="hidden" name="tier_key" value="'.e($t['key']).'"><input type="hidden" name="phone" value="'.e($application['phone']).'"><div class="plan-method"><span class="plan-method-label">Payment method</span><select name="method"><option value="mpesa">Vodacom M-Pesa</option><option value="tigopesa">Tigo Pesa / Mixx</option><option value="airtelmoney">Airtel Money</option><option value="halopesa">Halopesa</option><option value="card">Credit / Debit Card</option></select></div>'
             . $cycleOptions . '</form></article>';
     }
-    $content = '<div class="page"><p class="eyebrow">Royal Family TZ</p><h1>Choose your plan, '.e($application['full_name']).'</h1><p class="lead">Pick Silver or Gold, and monthly or yearly billing. You will confirm your mobile money payment next.</p><div class="plan-grid">'.$planCards.'</div></div>';
+    $planPageStyles = <<<'PLANCSS'
+<style>
+.rf-plans .plan-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:32px;align-items:start;margin-top:10px}
+.rf-plans .plan-card{position:relative;background:#fffdf7;border-radius:24px;padding:40px 32px 32px;box-shadow:0 12px 40px rgba(87,74,40,0.13);overflow:hidden;display:flex;flex-direction:column;border:2px solid #e8dfcb;transition:transform .25s ease,box-shadow .25s ease}
+.rf-plans .plan-card:hover{transform:translateY(-6px);box-shadow:0 22px 55px rgba(87,74,40,0.2)}
+.rf-plans .plan-card::before{content:"";position:absolute;top:0;left:0;right:0;height:8px}
+.rf-plans .plan-card.silver{border-color:#c3cbd4}
+.rf-plans .plan-card.silver::before{background:linear-gradient(90deg,#aab4c0,#6b7684)}
+.rf-plans .plan-card.gold{border-color:#c9a54c;background:linear-gradient(180deg,#fffdf7 0%,#fdf6e0 100%);padding-top:60px;box-shadow:0 16px 46px rgba(201,165,76,0.2)}
+.rf-plans .plan-card.gold:hover{transform:translateY(-10px);box-shadow:0 26px 60px rgba(201,165,76,0.27)}
+.rf-plans .plan-card.gold::before{display:none}
+.rf-plans .plan-most-popular{position:absolute;top:0;left:0;right:0;text-align:center;background:linear-gradient(90deg,#a9803a,#c9a54c 50%,#a9803a);color:#3b2e08;font-weight:800;font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;padding:9px 0}
+.rf-plans .plan-card-head{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.rf-plans .plan-card-icon{width:58px;height:58px;border-radius:16px;display:grid;place-items:center;font-size:1.75rem;box-shadow:0 2px 8px rgba(0,0,0,0.13);flex:0 0 58px}
+.rf-plans .plan-card.silver .plan-card-icon{background:linear-gradient(145deg,#e6ebee,#c3cbd4);border:1px solid #aab4c0}
+.rf-plans .plan-card.gold .plan-card-icon{background:linear-gradient(145deg,#f9ecc4,#e9c874);border:1px solid #c9a54c}
+.rf-plans .badge-chip{display:inline-flex;align-items:center;gap:6px;padding:7px 16px;border-radius:999px;font-weight:700;font-size:.8rem;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.06)}
+.rf-plans .badge-silver{background:#d8dee4;color:#3d4652;border:1px solid #9aa5b1}
+.rf-plans .badge-gold{background:#f6e2a8;color:#5c4813;border:1px solid #c9a54c}
+.rf-plans .plan-card h3{font-family:Fraunces,serif;font-size:1.6rem;margin:0 0 8px;color:#17251f}
+.rf-plans .plan-card .perk{color:#66736c;margin-bottom:20px;font-size:.96rem;line-height:1.5}
+.rf-plans .plan-features{list-style:none;margin:0 0 26px;padding:0;display:grid;gap:10px}
+.rf-plans .plan-features li{display:flex;align-items:center;gap:10px;font-size:.92rem;color:#17251f;font-weight:600}
+.rf-plans .plan-features li::before{content:"\2713";display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;font-size:.65rem;font-weight:800;flex:0 0 20px;color:#fff}
+.rf-plans .plan-card.silver .plan-features li::before{background:#7d8794}
+.rf-plans .plan-card.gold .plan-features li::before{background:#c9a54c;color:#3b2e08}
+.rf-plans .plan-method{margin-bottom:22px}
+.rf-plans .plan-method-label{font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;color:#66736c;font-weight:700;display:block;margin-bottom:7px}
+.rf-plans .plan-method select{width:100%;padding:13px 14px;border:1.5px solid #d9d1bf;border-radius:10px;background:#fff;font-size:.95rem;font-weight:600;box-sizing:border-box}
+.rf-plans .plan-card.gold .plan-method select{border-color:#e3cd93}
+.rf-plans .plan-cta-group{display:flex;flex-direction:column;gap:11px;margin-top:auto}
+.rf-plans .plan-cta{display:flex;align-items:center;justify-content:space-between;width:100%;border:0;border-radius:14px;padding:16px 22px;font-weight:700;cursor:pointer;transition:transform .15s ease,box-shadow .15s ease;font-size:1rem;font-family:'DM Sans',sans-serif}
+.rf-plans .plan-cta:hover{transform:translateY(-2px)}
+.rf-plans .plan-card.silver .plan-cta:first-child{background:linear-gradient(135deg,#4a5560,#262c34);color:#fff;box-shadow:0 8px 20px rgba(35,38,44,0.25)}
+.rf-plans .plan-card.silver .plan-cta:not(:first-child){background:#fff;color:#3d4652;border:2px solid #c3cbd4}
+.rf-plans .plan-card.silver .plan-cta:not(:first-child):hover{border-color:#8a94a6;background:#f5f7f8}
+.rf-plans .plan-card.gold .plan-cta:first-child{background:linear-gradient(135deg,#e9c874,#c9a54c 55%,#a9803a);color:#2f2408;box-shadow:0 8px 22px rgba(201,165,76,0.27)}
+.rf-plans .plan-card.gold .plan-cta:not(:first-child){background:#fff;color:#8a6d1d;border:2px solid #c9a54c}
+.rf-plans .plan-card.gold .plan-cta:not(:first-child):hover{background:#fffaeb}
+.rf-plans .plan-cta .cta-label{opacity:.85;font-size:.76rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+.rf-plans .plan-cta .cta-price{font-family:Fraunces,serif;font-size:1.2rem}
+@media(max-width:760px){.rf-plans .plan-grid{grid-template-columns:1fr}.rf-plans .plan-card{padding:32px 22px 24px}.rf-plans .plan-card.gold{padding-top:52px}}
+</style>
+PLANCSS;
+    $content = $planPageStyles.'<div class="page rf-plans"><p class="eyebrow">Royal Family TZ</p><h1>Choose your plan, '.e($application['full_name']).'</h1><p class="lead">Pick Silver or Gold, and monthly or yearly billing. You will confirm your mobile money payment next.</p><div class="plan-grid">'.$planCards.'</div></div>';
     break;
 case '/apply-membership':
     $content = '<div class="success-modal" id="membership-terms-modal"><div class="success-card terms-card"><h2>Foundation Membership Terms & Conditions</h2><div class="terms-body">'
