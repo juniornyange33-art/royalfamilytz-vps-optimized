@@ -20,6 +20,7 @@ function tier_by_key(array $tiers, string $key): ?array { foreach ($tiers as $t)
 function tier_by_name(array $tiers, string $name): ?array { foreach ($tiers as $t) if ($t['name'] === $name) return $t; return null; }
 // A stored transaction "tier" looks like "Patron (Yearly)" — strip the billing-cycle suffix to match a tier definition.
 function tier_base_name(string $storedTier): string { return trim((string)preg_replace('/\s*\([^)]*\)\s*$/', '', $storedTier)); }
+function ensure_donor_columns(): void { static $done = false; if ($done) return; try { db()->exec("ALTER TABLE donor_sponsorships MODIFY supporter_type VARCHAR(150) NOT NULL"); } catch (Throwable $e) {} try { db()->exec("ALTER TABLE donor_sponsorships MODIFY frequency VARCHAR(80) NULL"); } catch (Throwable $e) {} $done = true; }
 function ensure_donor_sponsorships_table(): void {
     db()->exec("CREATE TABLE IF NOT EXISTS donor_sponsorships (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -51,6 +52,7 @@ function ensure_donor_sponsorships_table(): void {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 }
 function ensure_membership_applications_table(): void {
+    static $done = false; if ($done) return;
     db()->exec("CREATE TABLE IF NOT EXISTS membership_applications (
         id INT AUTO_INCREMENT PRIMARY KEY,
         user_id INT NULL,
@@ -86,8 +88,10 @@ function ensure_membership_applications_table(): void {
     if (!isset($columns['user_id'])) db()->exec('ALTER TABLE membership_applications ADD COLUMN user_id INT NULL');
     if (!isset($columns['tier_key'])) db()->exec('ALTER TABLE membership_applications ADD COLUMN tier_key VARCHAR(20) NULL');
     if (!isset($columns['cycle'])) db()->exec("ALTER TABLE membership_applications ADD COLUMN cycle VARCHAR(10) NULL");
+    $done = true;
 }
 function ensure_leaders_table(): void {
+    static $done = false; if ($done) return;
     db()->exec("CREATE TABLE IF NOT EXISTS foundation_leaders (
         id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
         name VARCHAR(150) NOT NULL,
@@ -97,16 +101,24 @@ function ensure_leaders_table(): void {
         sort_order INT NOT NULL DEFAULT 0,
         created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    $done = true;
 }
 function ensure_registration_transaction_type(): void { static $done = false; if ($done) return; try { db()->exec("ALTER TABLE transactions MODIFY type ENUM('donation','subscription','trip','registration','membership_signup') NOT NULL"); } catch (Throwable $e) {} $done = true; }
 function ensure_membership_badge_column(): void { static $done = false; if ($done) return; $columns = []; foreach (db()->query('SHOW COLUMNS FROM users')->fetchAll() as $column) $columns[(string)$column['Field']] = true; if (!isset($columns['membership_badge'])) db()->exec("ALTER TABLE users ADD COLUMN membership_badge VARCHAR(20) NULL"); $done = true; }
 function ensure_ticket_column(): void { static $done = false; if ($done) return; $columns = []; foreach (db()->query('SHOW COLUMNS FROM trip_bookings')->fetchAll() as $column) $columns[(string)$column['Field']] = true; if (!isset($columns['ticket_sent_at'])) db()->exec('ALTER TABLE trip_bookings ADD COLUMN ticket_sent_at DATETIME NULL'); $done = true; }
 function badge_display(?string $badgeKey): array {
     return match ($badgeKey) {
-        'silver' => ['label' => 'Silver Member', 'icon' => '🥈', 'color' => '#8a94a6'],
-        'gold'   => ['label' => 'Gold Member', 'icon' => '🥇', 'color' => '#c9a54c'],
-        default  => ['label' => 'Member', 'icon' => '🎫', 'color' => '#285743'],
+        'silver' => ['label' => 'Silver Member', 'icon' => '🥈', 'color' => '#8a94a6', 'class' => 'badge-silver', 'gradient' => 'linear-gradient(135deg,#c3cbd4,#6b7684)'],
+        'gold'   => ['label' => 'Gold Member', 'icon' => '🥇', 'color' => '#c9a54c', 'class' => 'badge-gold', 'gradient' => 'linear-gradient(135deg,#e9c874,#a9803a)'],
+        default  => ['label' => 'Member', 'icon' => '🎫', 'color' => '#12b76a', 'class' => 'badge-member', 'gradient' => 'linear-gradient(135deg,#34d399,#0e9f6e)'],
     };
+}
+function membership_card_html(array $user): string {
+    if (empty($user['membership'])) return '<div class="card"><p class="muted">You are not an active member yet.</p><a class="btn gold" href="/apply-membership">Membership Registration</a></div>';
+    $badge = badge_display($user['membership_badge'] ?? null);
+    $avatar = profile_src($user);
+    $photoHtml = $avatar ? '<img class="membership-card-photo" src="'.e($avatar).'" alt="Profile photo">' : '<div class="membership-card-photo membership-card-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>';
+    return '<div class="membership-card" style="background:'.$badge['gradient'].'"><div class="membership-card-top"><span class="badge-chip '.e($badge['class']).'">'.$badge['icon'].' '.e($badge['label']).'</span></div><div class="membership-card-body">'.$photoHtml.'<div><h3>'.e($user['name']).'</h3><p>Royal Family TZ Member</p><p class="membership-card-id">'.e($user['membership_id'] ?: 'ID pending confirmation').'</p></div></div></div>';
 }
 function send_membership_signup_confirmation_email(string $orderReference): void {
     try {
@@ -282,22 +294,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     if ($action === 'admin_user_create' && $user && $user['role'] === 'admin') {
         try {
-            ensure_profile_columns();
+            ensure_profile_columns(); ensure_membership_badge_column();
             $name = trim($_POST['name'] ?? ''); $email = strtolower(trim($_POST['email'] ?? '')); $password = $_POST['password'] ?? ''; $role = in_array($_POST['role'] ?? 'member', ['member','admin'], true) ? $_POST['role'] : 'member'; $active = !empty($_POST['membership_active']) ? 1 : 0;
+            $badge = in_array($_POST['membership_badge'] ?? '', ['silver','gold'], true) ? $_POST['membership_badge'] : null;
             if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($password) < 6) throw new RuntimeException('Please provide a valid name, email, and a password of at least 6 characters.');
-            db()->prepare('INSERT INTO users (name, email, password_hash, role, membership_active, email_verified_at) VALUES (?, ?, ?, ?, ?, NOW())')->execute([$name, $email, password_hash($password, PASSWORD_DEFAULT), $role, $active]);
+            db()->prepare('INSERT INTO users (name, email, password_hash, role, membership_active, membership_badge, email_verified_at) VALUES (?, ?, ?, ?, ?, ?, NOW())')->execute([$name, $email, password_hash($password, PASSWORD_DEFAULT), $role, $active, $badge]);
+            // Membership ID is derived from the new row's own auto-increment id, so it can never collide with another member's.
+            if ($active) { $newId = (int)db()->lastInsertId(); $prefix = $badge === 'gold' ? 'GOLD' : ($badge === 'silver' ? 'SILVER' : 'MEMBER'); db()->prepare('UPDATE users SET membership_id = ? WHERE id = ?')->execute([$prefix . '-' . str_pad((string)$newId, 6, '0', STR_PAD_LEFT), $newId]); }
             $_SESSION['flash'] = 'User account created.';
         } catch (Throwable $e) { $_SESSION['flash'] = ($e instanceof PDOException && $e->getCode() === '23000') ? 'That email is already registered.' : ('User could not be created: ' . $e->getMessage()); }
         header('Location: /admin/users'); exit;
     }
     if ($action === 'admin_user_update' && $user && $user['role'] === 'admin') {
         try {
+            ensure_membership_badge_column();
             $id = (int)($_POST['user_id'] ?? 0); $name = trim($_POST['name'] ?? ''); $email = strtolower(trim($_POST['email'] ?? '')); $role = in_array($_POST['role'] ?? 'member', ['member','admin'], true) ? $_POST['role'] : 'member'; $active = !empty($_POST['membership_active']) ? 1 : 0;
+            $badge = in_array($_POST['membership_badge'] ?? '', ['silver','gold'], true) ? $_POST['membership_badge'] : null;
             if (!$id || $name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) throw new RuntimeException('Please provide a valid name and email.');
+            // Membership IDs are derived from the user's own unique primary key, so two members
+            // can never collide — and COALESCE below means an existing ID is never overwritten.
+            $newMembershipId = null;
+            if ($active) { $prefix = $badge === 'gold' ? 'GOLD' : ($badge === 'silver' ? 'SILVER' : 'MEMBER'); $newMembershipId = $prefix . '-' . str_pad((string)$id, 6, '0', STR_PAD_LEFT); }
             if (!empty($_POST['password'])) {
                 if (strlen($_POST['password']) < 6) throw new RuntimeException('Password must be at least 6 characters.');
-                db()->prepare('UPDATE users SET name=?, email=?, role=?, membership_active=?, password_hash=? WHERE id=?')->execute([$name, $email, $role, $active, password_hash($_POST['password'], PASSWORD_DEFAULT), $id]);
-            } else db()->prepare('UPDATE users SET name=?, email=?, role=?, membership_active=? WHERE id=?')->execute([$name, $email, $role, $active, $id]);
+                db()->prepare('UPDATE users SET name=?, email=?, role=?, membership_active=?, membership_badge=?, membership_id=COALESCE(membership_id, ?), password_hash=? WHERE id=?')->execute([$name, $email, $role, $active, $badge, $newMembershipId, password_hash($_POST['password'], PASSWORD_DEFAULT), $id]);
+            } else db()->prepare('UPDATE users SET name=?, email=?, role=?, membership_active=?, membership_badge=?, membership_id=COALESCE(membership_id, ?) WHERE id=?')->execute([$name, $email, $role, $active, $badge, $newMembershipId, $id]);
             $_SESSION['flash'] = 'User updated.';
         } catch (Throwable $e) { $_SESSION['flash'] = ($e instanceof PDOException && $e->getCode() === '23000') ? 'That email is already registered.' : ('User could not be updated: ' . $e->getMessage()); }
         header('Location: /admin/users'); exit;
@@ -465,8 +486,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$user) { $_SESSION['flash'] = 'Please create an account or log in to support the mission.'; header('Location: /login?next=' . urlencode('/donate')); exit; }
         try {
             ensure_donor_sponsorships_table();
+            ensure_donor_columns();
             $fullName = trim($_POST['full_name'] ?? '');
             $supporterType = $_POST['supporter_type'] ?? '';
+            if ($supporterType === 'Other') { $supporterType = trim($_POST['supporter_type_other'] ?? '') ?: 'Other'; }
             $contactPerson = trim($_POST['contact_person'] ?? '');
             $phone = trim($_POST['phone'] ?? '');
             $whatsapp = trim($_POST['whatsapp'] ?? '');
@@ -479,6 +502,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $amount = (float)($_POST['amount'] ?? 0);
             $preferredProject = trim($_POST['preferred_project'] ?? '');
             $frequency = trim($_POST['frequency'] ?? '');
+            if ($frequency === 'Other') { $frequency = trim($_POST['frequency_other'] ?? '') ?: 'Other'; }
             $wantsPartnership = $_POST['wants_partnership'] ?? '';
             $partnershipType = trim($_POST['partnership_type'] ?? '');
             $partnershipExpectation = trim($_POST['partnership_expectation'] ?? '');
@@ -608,6 +632,7 @@ function css(): string { return <<<'CSS'
 .badge-spring{background:#e4f9e1;color:#1f7a3d;border:1px solid #9be8a4}
 .badge-silver{background:#d8dee4;color:#3d4652;border:1px solid #9aa5b1}
 .badge-gold{background:#f6e2a8;color:#5c4813;border:1px solid var(--gold)}
+.badge-member{background:#d1fae5;color:#0e6b4a;border:1px solid #34d399}
 .tier-card p{margin-bottom:16px}
 .plan-options{display:grid;grid-template-columns:1fr 1fr;gap:10px;width:100%;margin-top:auto}
 .plan-btn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:12px 8px;border:2px solid #e8dfcb;border-radius:12px;background:#fff;text-align:center;transition:all .2s}
@@ -618,8 +643,8 @@ function css(): string { return <<<'CSS'
 .plan-summary h2{margin:6px 0}
 .amount-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:6px 0 14px}
 .amount-chip{position:relative}
-.amount-chip input[type="radio"]{position:absolute;opacity:0;width:0;height:0}
-.amount-chip label{display:flex;align-items:center;justify-content:center;padding:14px 6px;border:2px solid #e8dfcb;border-radius:12px;background:#fff;cursor:pointer;font-weight:700;text-align:center;font-size:.92rem;height:100%}
+.amount-chip input[type="radio"],.amount-chip input[type="checkbox"]{position:absolute;opacity:0;width:0;height:0;margin:0}
+.amount-chip label{display:flex;align-items:center;justify-content:center;padding:14px 10px;border:2px solid #e8dfcb;border-radius:12px;background:#fff;cursor:pointer;font-weight:700;text-align:center;font-size:.92rem;height:100%;line-height:1.25}
 .amount-chip input:checked+label{border-color:var(--gold);background:#fffef0;box-shadow:0 4px 12px #c9a54c22}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .form-row label{width:100%}
@@ -675,6 +700,17 @@ function css(): string { return <<<'CSS'
 .status-badge.status-pending{background:#fef3d6;color:#8a6d1d}
 .status-badge.status-failed{background:#fbe2e2;color:#a13333}
 @keyframes fade{from{opacity:.35}to{opacity:1}}@media(max-width:760px){.menu-toggle{display:block}.nav{padding:14px 18px;flex-wrap:wrap}.nav nav{display:none;width:100%;flex-direction:column;align-items:stretch;gap:3px;padding-top:8px}.nav nav.is-open{display:flex}.menu-checkbox:checked~nav[data-mobile-nav]{display:flex}.nav nav a{padding:10px 4px;border-bottom:1px solid #e8dfcb}.brand-logo{width:58px;height:58px}.hero{grid-template-columns:1fr;padding-top:25px}.hero-art,.gallery{min-height:280px}.gallery .slide,.gallery img,.about-gallery .slide,.about-gallery img{min-height:280px}.dashboard-welcome{align-items:flex-start}.grid,.stats,footer{grid-template-columns:1fr}nav{gap:11px;font-size:.8rem}.copyright{text-align:left}}
+.dashboard-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:28px;flex-wrap:wrap}
+.dashboard-top .dashboard-welcome{margin-bottom:0}
+.notif-bell{position:relative}
+.notif-bell summary{list-style:none;cursor:pointer;width:46px;height:46px;border-radius:50%;background:#fff;border:1px solid #e8dfcb;display:grid;place-items:center;font-size:1.3rem;box-shadow:0 2px 8px #0001}
+.notif-bell summary::-webkit-details-marker{display:none}
+.notif-count{position:absolute;top:-4px;right:-4px;background:#a44135;color:#fff;font-size:.65rem;font-weight:800;min-width:18px;height:18px;border-radius:9px;display:grid;place-items:center;padding:0 4px}
+.notif-panel{position:absolute;right:0;top:54px;width:min(320px,80vw);max-height:360px;overflow:auto;background:#fffdf7;border:1px solid #e8dfcb;border-radius:14px;box-shadow:0 14px 40px #0002;padding:14px;z-index:15}
+.notif-panel h4{margin:0 0 10px}
+.notif-item{padding:10px 0;border-bottom:1px solid #e8dfcb}
+.notif-item:last-child{border-bottom:0}
+.notif-item p{margin:4px 0;font-size:.88rem;color:var(--ink)}
 .leader-card{text-align:center;padding:32px 24px}
 .leader-photo{width:120px;height:120px;border-radius:50%;object-fit:cover;margin:0 auto 18px;display:block;border:4px solid #fff;box-shadow:0 6px 20px #17382c22}
 .leader-photo-placeholder{display:grid;place-items:center;background:var(--royal);color:#fff;font:700 2.6rem Fraunces}
@@ -847,7 +883,7 @@ case '/donate':
         . '<div class="page"><p class="eyebrow">"Your presence can change a life."</p><h1>Donor & Sponsorship Registration</h1><p class="lead">Support Royal Family Foundation with a financial gift, equipment, expertise, or a partnership — tell us how you would like to help.</p><div class="form-card"><form class="form" method="post"><input type="hidden" name="action" value="donor_signup"><input type="hidden" id="donor_agreed_terms_field" name="agreed_terms" value="0">'
         . '<h3>A. Donor / sponsor information</h3>'
         . '<label>Full name / organization name<input name="full_name" required></label>'
-        . '<label style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Type of supporter</label><div class="amount-grid"><div class="amount-chip"><input type="radio" name="supporter_type" value="Individual" id="sup-individual" required><label for="sup-individual">Individual</label></div><div class="amount-chip"><input type="radio" name="supporter_type" value="Company" id="sup-company"><label for="sup-company">Company</label></div><div class="amount-chip"><input type="radio" name="supporter_type" value="NGO / Organization" id="sup-ngo"><label for="sup-ngo">NGO / Organization</label></div><div class="amount-chip"><input type="radio" name="supporter_type" value="Institution" id="sup-institution"><label for="sup-institution">Institution</label></div></div>'
+        . '<label style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Type of supporter</label><div class="amount-grid"><div class="amount-chip"><input type="radio" name="supporter_type" value="Individual" id="sup-individual" required><label for="sup-individual">Individual</label></div><div class="amount-chip"><input type="radio" name="supporter_type" value="Company" id="sup-company"><label for="sup-company">Company</label></div><div class="amount-chip"><input type="radio" name="supporter_type" value="NGO / Organization" id="sup-ngo"><label for="sup-ngo">NGO / Organization</label></div><div class="amount-chip"><input type="radio" name="supporter_type" value="Institution" id="sup-institution"><label for="sup-institution">Institution</label></div><div class="amount-chip"><input type="radio" name="supporter_type" value="Other" id="sup-other"><label for="sup-other">Other</label></div></div><label>If other, please specify<input name="supporter_type_other" placeholder="Optional"></label>'
         . '<div class="form-row"><label>Contact person (if organization)<input name="contact_person"></label><label>Phone number<input name="phone" placeholder="0712345678" required></label></div>'
         . '<div class="form-row"><label>WhatsApp number<input name="whatsapp" placeholder="0712345678"></label><label>Email address<input type="email" name="email" required></label></div>'
         . '<label>Location / address<input name="location_address" required></label>'
@@ -874,7 +910,7 @@ case '/donate':
         . '</div><label>Other area<input name="support_area_other" placeholder="Optional"></label>'
         . '<h3>D. Support details</h3>'
         . '<div class="form-row"><label>Amount / value of support, TZS (if applicable)<input type="number" name="amount" min="0" placeholder="e.g. 50000"></label><label>Preferred project / campaign to support<input name="preferred_project" placeholder="Optional"></label></div>'
-        . '<label style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Would you like your support to be:</label><div class="amount-grid"><div class="amount-chip"><input type="radio" name="frequency" value="One-time" id="freq-one" checked><label for="freq-one">One-time</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Monthly" id="freq-monthly"><label for="freq-monthly">Monthly</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Quarterly" id="freq-quarterly"><label for="freq-quarterly">Quarterly</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Annual" id="freq-annual"><label for="freq-annual">Annual</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Project-based" id="freq-project"><label for="freq-project">Project-based</label></div></div>'
+        . '<label style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Would you like your support to be:</label><div class="amount-grid"><div class="amount-chip"><input type="radio" name="frequency" value="One-time" id="freq-one" checked><label for="freq-one">One-time</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Monthly" id="freq-monthly"><label for="freq-monthly">Monthly</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Quarterly" id="freq-quarterly"><label for="freq-quarterly">Quarterly</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Annual" id="freq-annual"><label for="freq-annual">Annual</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Project-based" id="freq-project"><label for="freq-project">Project-based</label></div><div class="amount-chip"><input type="radio" name="frequency" value="Other" id="freq-other"><label for="freq-other">Other</label></div></div><label>If other, please specify<input name="frequency_other" placeholder="Optional"></label>'
         . '<h3>E. Partnership & sponsorship</h3>'
         . '<label style="font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Are you interested in a long-term partnership with RFF?</label><div class="amount-grid"><div class="amount-chip"><input type="radio" name="wants_partnership" value="Yes" id="pp-yes"><label for="pp-yes">Yes</label></div><div class="amount-chip"><input type="radio" name="wants_partnership" value="No" id="pp-no"><label for="pp-no">No</label></div><div class="amount-chip"><input type="radio" name="wants_partnership" value="Maybe" id="pp-maybe"><label for="pp-maybe">Maybe</label></div></div>'
         . '<div class="form-row"><label>If yes, what type of partnership?<input name="partnership_type" placeholder="Optional"></label><label>What would you expect from the partnership?<input name="partnership_expectation" placeholder="Optional"></label></div>'
@@ -937,7 +973,14 @@ case '/support/pay':
     break;
 case '/login': $nextParam = (string)($_GET['next'] ?? ''); $content='<div class="page"><div class="form-card"><p class="eyebrow">Welcome back</p><h2>Log in</h2><a class="google-btn" href="'.e(app_base_path()).'/auth/google/start"><span class="google-icon" aria-hidden="true">G</span> Continue with Google</a><div class="or">or use email</div><form class="form" method="post"><input type="hidden" name="action" value="login"><input type="hidden" name="next" value="'.e($nextParam).'"><label>Email<input type="email" name="email" required></label><label>Password<input type="password" name="password" required></label><button class="btn" type="submit">Log in</button></form><p>New here? <a href="/signup'.($nextParam ? '?next=' . rawurlencode($nextParam) : '').'"><u>Sign up</u></a></p></div></div>'; break;
 case '/signup': $nextParam = (string)($_GET['next'] ?? ''); $content='<div class="page"><div class="form-card"><p class="eyebrow">Start your journey</p><h2>Create your account</h2><a class="google-btn" href="'.e(app_base_path()).'/auth/google/start"><span class="google-icon" aria-hidden="true">G</span> Sign up with Google</a><div class="or">or create an account with email</div><form class="form" method="post" enctype="application/x-www-form-urlencoded"><input type="hidden" name="action" value="signup"><input type="hidden" name="next" value="'.e($nextParam).'"><label>Full name<input name="name" required></label><label>Email<input type="email" name="email" required></label><label>Password<input type="password" name="password" minlength="6" required></label><button class="btn" type="submit">Sign up</button></form><p>Already have an account? <a href="/login'.($nextParam ? '?next=' . rawurlencode($nextParam) : '').'"><u>Log in</u></a></p></div></div>'; break;
-case '/dashboard': $dashAvatar = profile_src($user); $dashPhoto = $dashAvatar ? '<img class="dashboard-avatar" src="'.e($dashAvatar).'" alt="Profile photo of '.e($user['name']).'">' : '<div class="dashboard-avatar dashboard-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>'; $eventCards=''; foreach($events as $event) $eventCards.='<article class="card"><p class="eyebrow">Upcoming event</p><h3>'.e($event['title']).'</h3><p>'.e($event['description']).'</p><p class="muted">'.e($event['location'] ?? '').($event['event_date']?' · '.e(date('M j, Y g:i A', strtotime($event['event_date']))):'').'</p></article>'; $noticeCards=''; foreach($notifications as $notice) $noticeCards.='<article class="card"><p class="eyebrow">Notification</p><h3>'.e($notice['title']).'</h3><p>'.e($notice['message']).'</p><p class="muted">'.e(date('M j, Y', strtotime($notice['created_at']))).'</p></article>'; $dashBadge = badge_display($user['membership_badge'] ?? null); $membershipStat = $user['membership'] ? '<span class="badge-chip badge-'.e($user['membership_badge'] ?? '').'">'.$dashBadge['icon'].' '.e($dashBadge['label']).'</span>'.($user['membership_id']?'<br><small class="muted">'.e($user['membership_id']).'</small>':'') : '—'; $content='<div class="page"><div class="dashboard-welcome">'.$dashPhoto.'<div><p class="eyebrow">Member space</p><h1>Welcome, '.e($user['name']).'</h1><p class="muted">Your profile photo appears here after you add it from your profile page.</p></div></div><div class="stats"><div class="stat"><strong>'.$membershipStat.'</strong><span>Membership status</span></div><div class="stat"><strong>'.count($events).'</strong><span>Upcoming events</span></div><div class="stat"><strong>'.count($notifications).'</strong><span>Notifications</span></div></div><section class="section"><p class="eyebrow">Stay connected</p><h2>Events and updates</h2><div class="grid">'.($eventCards ?: '<article class="card"><p class="muted">No upcoming events yet.</p></article>').($noticeCards ?: '<article class="card"><p class="muted">No new notifications.</p></article>').'</div></section><div class="grid"><article class="card"><h3>Your profile</h3><p>'.e($user['email']).'</p><a class="btn" href="/profile">Edit profile</a></article><article class="card"><h3>Grow with us</h3><p>Activate your membership and join the next community experience.</p><a class="btn gold" href="/apply-membership">Choose a plan</a></article></div></div>'; break;
+case '/dashboard':
+    $dashAvatar = profile_src($user); $dashPhoto = $dashAvatar ? '<img class="dashboard-avatar" src="'.e($dashAvatar).'" alt="Profile photo of '.e($user['name']).'">' : '<div class="dashboard-avatar dashboard-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>';
+    $eventCards=''; foreach($events as $event) $eventCards.='<article class="card"><p class="eyebrow">Upcoming event</p><h3>'.e($event['title']).'</h3><p>'.e($event['description']).'</p><p class="muted">'.e($event['location'] ?? '').($event['event_date']?' · '.e(date('M j, Y g:i A', strtotime($event['event_date']))):'').'</p></article>';
+    $notifPanelItems=''; foreach($notifications as $notice) $notifPanelItems.='<div class="notif-item"><strong>'.e($notice['title']).'</strong><p>'.e($notice['message']).'</p><small class="muted">'.e(date('M j, Y', strtotime($notice['created_at']))).'</small></div>';
+    $notifCount = count($notifications);
+    $notifBell = '<details class="notif-bell"><summary aria-label="Notifications">🔔'.($notifCount ? '<span class="notif-count">'.$notifCount.'</span>' : '').'</summary><div class="notif-panel"><h4>Notifications</h4>'.($notifPanelItems ?: '<p class="muted">No notifications yet.</p>').'</div></details>';
+    $dashBadge = badge_display($user['membership_badge'] ?? null); $membershipStat = $user['membership'] ? '<span class="badge-chip '.e($dashBadge['class']).'">'.$dashBadge['icon'].' '.e($dashBadge['label']).'</span>'.($user['membership_id']?'<br><small class="muted">'.e($user['membership_id']).'</small>':'') : '—';
+    $content='<div class="page"><div class="dashboard-top"><div class="dashboard-welcome">'.$dashPhoto.'<div><p class="eyebrow">Member space</p><h1>Welcome, '.e($user['name']).'</h1><p class="muted">Your profile photo appears here after you add it from your profile page.</p></div></div>'.$notifBell.'</div><div class="stats"><div class="stat"><strong>'.$membershipStat.'</strong><span>Membership status</span></div><div class="stat"><strong>'.count($events).'</strong><span>Upcoming events</span></div><div class="stat"><strong>'.$notifCount.'</strong><span>Notifications</span></div></div><section class="section" style="margin-top:0"><p class="eyebrow">Your membership</p><h2>Membership card</h2>'.membership_card_html($user).'</section><section class="section"><p class="eyebrow">Stay connected</p><h2>Upcoming events</h2><div class="grid">'.($eventCards ?: '<article class="card"><p class="muted">No upcoming events yet.</p></article>').'</div></section><div class="grid"><article class="card"><h3>Your profile</h3><p>'.e($user['email']).'</p><a class="btn" href="/profile">Edit profile</a></article><article class="card"><h3>Grow with us</h3><p>Activate your membership and join the next community experience.</p><a class="btn gold" href="/apply-membership">Membership Registration</a></article></div></div>'; break;
 case '/profile':
     try {
         ensure_membership_badge_column();
@@ -947,8 +990,7 @@ case '/profile':
         if ($fresh) { $user['membership'] = (bool)$fresh['membership_active']; $user['membership_id'] = $fresh['membership_id']; $user['membership_badge'] = $fresh['membership_badge']; $_SESSION['user'] = $user; }
     } catch (Throwable $e) {}
     $avatar = profile_src($user);
-    $cardBadge = badge_display($user['membership_badge'] ?? null);
-    $membershipCard = !empty($user['membership']) ? '<div class="membership-card"><div class="membership-card-top"><span class="badge-chip '.e('badge-' . ($user['membership_badge'] ?? '')).'">'.$cardBadge['icon'].' '.e($cardBadge['label']).'</span></div><div class="membership-card-body">'.($avatar ? '<img class="membership-card-photo" src="'.e($avatar).'" alt="Profile photo">' : '<div class="membership-card-photo membership-card-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>').'<div><h3>'.e($user['name']).'</h3><p>Royal Family TZ Member</p><p class="membership-card-id">'.e($user['membership_id'] ?: 'ID pending confirmation').'</p></div></div></div>' : '<div class="card"><p class="muted">You are not an active member yet.</p><a class="btn gold" href="/apply-membership">Become a member</a></div>';
+    $membershipCard = membership_card_html($user);
     $ticketCards = '';
     try {
         ensure_ticket_column();
@@ -985,12 +1027,15 @@ case '/admin/membership-applications':
     $content = '<div class="page"><p class="eyebrow">Admin workspace</p><h1>Membership form submissions</h1><p class="lead">Every membership application submitted through the site, for a full audit trail — pending and paid.</p><div class="card"><div style="overflow:auto"><table><thead><tr><th>Name</th><th>Contact</th><th>Category</th><th>Plan</th><th>Status</th><th>Membership ID</th><th>Submitted</th></tr></thead><tbody>'.($appRows ?: '<tr><td colspan="7">No applications submitted yet.</td></tr>').'</tbody></table></div></div></div>';
     break;
 case '/admin/users':
+    ensure_membership_badge_column();
     $userRows = ''; try {
-        foreach (db()->query('SELECT id, name, email, role, membership_active, membership_id, created_at FROM users ORDER BY created_at DESC') as $u) {
-            $userRows .= '<div class="card" style="margin-top:1rem"><div class="trip-admin-row"><span><strong>'.e($u['name']).'</strong><small>'.e($u['email']).' · '.e(ucfirst($u['role'])).' · '.($u['membership_active'] ? 'Active' : 'Inactive').($u['membership_id'] ? ' · '.e($u['membership_id']) : '').'</small></span></div><details><summary class="btn">Edit</summary><form class="form" method="post" style="margin-top:1rem"><input type="hidden" name="action" value="admin_user_update"><input type="hidden" name="user_id" value="'.(int)$u['id'].'"><div class="form-row"><label>Full name<input name="name" value="'.e($u['name']).'" required></label><label>Email<input type="email" name="email" value="'.e($u['email']).'" required></label></div><div class="form-row"><label>Role<select name="role"><option value="member"'.($u['role']==='member'?' selected':'').'>Member</option><option value="admin"'.($u['role']==='admin'?' selected':'').'>Admin</option></select></label><label>New password (leave blank to keep)<input type="password" name="password" placeholder="••••••" minlength="6"></label></div><label style="display:flex;align-items:center;gap:8px;font-weight:400"><input type="checkbox" name="membership_active" value="1" style="width:auto"'.($u['membership_active']?' checked':'').'> Membership active</label><button class="btn gold" type="submit">Save changes</button></form><form method="post" style="margin-top:.5rem" onsubmit="return confirm(\'Delete this user? This cannot be undone.\')"><input type="hidden" name="action" value="admin_user_delete"><input type="hidden" name="user_id" value="'.(int)$u['id'].'"><button class="btn danger" type="submit">Delete user</button></form></details></div>';
+        foreach (db()->query('SELECT id, name, email, role, membership_active, membership_id, membership_badge, created_at FROM users ORDER BY created_at DESC') as $u) {
+            $rowBadge = badge_display($u['membership_active'] ? ($u['membership_badge'] ?? null) : null);
+            $statusChip = $u['membership_active'] ? '<span class="badge-chip '.e($rowBadge['class']).'">'.$rowBadge['icon'].' '.e($rowBadge['label']).'</span>' : '<span class="muted">Inactive</span>';
+            $userRows .= '<div class="card" style="margin-top:1rem"><div class="trip-admin-row"><span><strong>'.e($u['name']).'</strong><small>'.e($u['email']).' · '.e(ucfirst($u['role'])).'</small></span>'.$statusChip.'</div>'.($u['membership_id'] ? '<p class="muted" style="margin:4px 0 0"><small>ID: '.e($u['membership_id']).'</small></p>' : '').'<details><summary class="btn">Edit</summary><form class="form" method="post" style="margin-top:1rem"><input type="hidden" name="action" value="admin_user_update"><input type="hidden" name="user_id" value="'.(int)$u['id'].'"><div class="form-row"><label>Full name<input name="name" value="'.e($u['name']).'" required></label><label>Email<input type="email" name="email" value="'.e($u['email']).'" required></label></div><div class="form-row"><label>Role<select name="role"><option value="member"'.($u['role']==='member'?' selected':'').'>Member</option><option value="admin"'.($u['role']==='admin'?' selected':'').'>Admin</option></select></label><label>New password (leave blank to keep)<input type="password" name="password" placeholder="••••••" minlength="6"></label></div><div class="form-row"><label style="display:flex;align-items:center;gap:8px;font-weight:400;align-self:end"><input type="checkbox" name="membership_active" value="1" style="width:auto"'.($u['membership_active']?' checked':'').'> Membership active</label><label>Membership card colour<select name="membership_badge"><option value=""'.(($u['membership_badge']??'')===''?' selected':'').'>Standard (spring green)</option><option value="silver"'.(($u['membership_badge']??'')==='silver'?' selected':'').'>Silver</option><option value="gold"'.(($u['membership_badge']??'')==='gold'?' selected':'').'>Gold</option></select></label></div><small class="muted">Activating a member with no membership ID yet will generate one automatically — each ID is tied to the account\'s own unique record, so IDs never repeat.</small><button class="btn gold" type="submit">Save changes</button></form><form method="post" style="margin-top:.5rem" onsubmit="return confirm(\'Delete this user? This cannot be undone.\')"><input type="hidden" name="action" value="admin_user_delete"><input type="hidden" name="user_id" value="'.(int)$u['id'].'"><button class="btn danger" type="submit">Delete user</button></form></details></div>';
         }
     } catch (Throwable $e) { $userRows = '<p class="muted">Database unavailable.</p>'; }
-    $content='<div class="page"><p class="eyebrow">Admin workspace</p><h1>Members</h1><p class="lead">Create, edit, or remove user accounts, and control membership status.</p><details class="admin-action"><summary class="btn gold">Add new user</summary><div class="card"><h3>Create a user account</h3><form class="form" method="post"><input type="hidden" name="action" value="admin_user_create"><div class="form-row"><label>Full name<input name="name" required></label><label>Email<input type="email" name="email" required></label></div><div class="form-row"><label>Password<input type="password" name="password" minlength="6" required></label><label>Role<select name="role"><option value="member">Member</option><option value="admin">Admin</option></select></label></div><label style="display:flex;align-items:center;gap:8px;font-weight:400"><input type="checkbox" name="membership_active" value="1" style="width:auto"> Membership active</label><button class="btn gold" type="submit">Create user</button></form></div></details>'.($userRows ?: '<p class="muted">No users yet.</p>').'</div>'; break;
+    $content='<div class="page"><p class="eyebrow">Admin workspace</p><h1>Members</h1><p class="lead">Create, edit, or remove user accounts, and control membership status.</p><details class="admin-action"><summary class="btn gold">Add new user</summary><div class="card"><h3>Create a user account</h3><form class="form" method="post"><input type="hidden" name="action" value="admin_user_create"><div class="form-row"><label>Full name<input name="name" required></label><label>Email<input type="email" name="email" required></label></div><div class="form-row"><label>Password<input type="password" name="password" minlength="6" required></label><label>Role<select name="role"><option value="member">Member</option><option value="admin">Admin</option></select></label></div><div class="form-row"><label style="display:flex;align-items:center;gap:8px;font-weight:400;align-self:end"><input type="checkbox" name="membership_active" value="1" style="width:auto"> Membership active</label><label>Membership card colour<select name="membership_badge"><option value="">Standard (spring green)</option><option value="silver">Silver</option><option value="gold">Gold</option></select></label></div><button class="btn gold" type="submit">Create user</button></form></div></details>'.($userRows ?: '<p class="muted">No users yet.</p>').'</div>'; break;
 case '/admin/payments':
     $rows = ''; try { foreach (db()->query('SELECT order_reference, type, amount, currency, method, status, channel, created_at FROM transactions ORDER BY created_at DESC') as $t) { $statusClass = $t['status'] === 'paid' ? 'status-paid' : ($t['status'] === 'failed' ? 'status-failed' : 'status-pending'); $statusLabel = $t['status'] === 'paid' ? 'Received' : ($t['status'] === 'failed' ? 'Failed' : 'Pending'); $rows .= '<tr><td>'.e($t['order_reference']).'</td><td>'.e(str_replace('_',' ',$t['type'])).'</td><td>'.e($t['currency'].' '.number_format((float)$t['amount'],2)).'</td><td>'.e($t['method']).'</td><td><span class="status-badge '.$statusClass.'">'.$statusLabel.'</span></td><td>'.e($t['channel'] ?? '—').'</td><td>'.e(date('M j, Y g:i A', strtotime($t['created_at']))).'</td></tr>'; } } catch (Throwable $e) { $rows = '<tr><td colspan="7">Database unavailable.</td></tr>'; } $content='<div class="page"><p class="eyebrow">Admin workspace</p><h1>Payments</h1><div class="card"><div style="overflow:auto"><table><thead><tr><th>Reference</th><th>Type</th><th>Amount</th><th>Method</th><th>Status</th><th>Channel</th><th>Date</th></tr></thead><tbody>'.$rows.'</tbody></table></div></div></div>'; break;
 case '/admin/blog': case '/admin/images': $content='<div class="page"><p class="eyebrow">Admin workspace</p><h1>'.e(ucwords(str_replace(['/admin/','-'],' ', $path))).'</h1><div class="card"><p class="lead">This area is ready for content management. The member and payment records are connected to MySQL.</p><a class="btn" href="/admin">Back to dashboard</a></div></div>'; break;
