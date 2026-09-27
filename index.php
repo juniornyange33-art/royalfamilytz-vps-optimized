@@ -121,12 +121,23 @@ function ensure_blog_table(): void {
 // "add post" to fail with "column not found in database" errors.
 function ensure_blog_columns(): void {
     static $done = false; if ($done) return;
+    $rows = db()->query('SHOW COLUMNS FROM blog_posts')->fetchAll();
     $columns = [];
-    foreach (db()->query('SHOW COLUMNS FROM blog_posts')->fetchAll() as $column) $columns[(string)$column['Field']] = true;
+    foreach ($rows as $column) $columns[(string)$column['Field']] = $column;
     if (!isset($columns['description'])) db()->exec('ALTER TABLE blog_posts ADD COLUMN description TEXT NULL');
     if (!isset($columns['thumbnail'])) db()->exec('ALTER TABLE blog_posts ADD COLUMN thumbnail VARCHAR(255) NULL');
     if (!isset($columns['video'])) db()->exec('ALTER TABLE blog_posts ADD COLUMN video VARCHAR(255) NULL');
     if (!isset($columns['external_link'])) db()->exec('ALTER TABLE blog_posts ADD COLUMN external_link VARCHAR(255) NULL');
+    // Some live databases have extra legacy columns (e.g. "excerpt") that are NOT NULL
+    // with no default, which are not part of this form and were blocking every insert
+    // with "Field 'x' doesn't have a default value". Relax any such column to nullable
+    // instead of guessing what value it should hold.
+    foreach ($columns as $name => $column) {
+        if (in_array($name, ['id', 'title', 'description', 'thumbnail', 'video', 'external_link', 'created_at'], true)) continue;
+        if (($column['Null'] ?? 'YES') === 'NO' && $column['Default'] === null) {
+            try { db()->exec('ALTER TABLE blog_posts MODIFY `' . $name . '` ' . $column['Type'] . ' NULL'); } catch (Throwable $e) {}
+        }
+    }
     $done = true;
 }
 function blog_media_src(?string $file): string { return $file ? app_base_path().'/uploads/blog/'.basename($file) : ''; }
@@ -833,17 +844,23 @@ function css(): string { return <<<'CSS'
 @keyframes fade{from{opacity:.35}to{opacity:1}}@media(max-width:760px){.menu-toggle{display:block}.nav{padding:14px 18px;flex-wrap:wrap}.nav nav{display:none;width:100%;flex-direction:column;align-items:stretch;gap:3px;padding-top:8px}.nav nav.is-open{display:flex}.menu-checkbox:checked~nav[data-mobile-nav]{display:flex}.nav nav a{padding:10px 4px;border-bottom:1px solid #e8dfcb}.brand-logo{width:58px;height:58px}.hero{grid-template-columns:1fr;padding-top:25px}.hero-art,.gallery{min-height:280px}.gallery .slide,.gallery img,.about-gallery .slide,.about-gallery img{min-height:280px}.dashboard-welcome{align-items:flex-start}.grid,.stats,footer{grid-template-columns:1fr}nav{gap:11px;font-size:.8rem}.copyright{text-align:left}}
 .dashboard-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:28px;flex-wrap:wrap}
 .dashboard-top .dashboard-welcome{margin-bottom:0}
-.notif-bell{position:relative}
 .notif-bell-link{position:relative;text-decoration:none;width:46px;height:46px;border-radius:50%;background:#fff;border:1px solid #e8dfcb;display:grid;place-items:center;font-size:1.3rem;box-shadow:0 2px 8px #0001;flex:0 0 auto}
 .notif-bell-link:hover{background:#fdf6e0}
-.notif-bell summary{list-style:none;cursor:pointer;width:46px;height:46px;border-radius:50%;background:#fff;border:1px solid #e8dfcb;display:grid;place-items:center;font-size:1.3rem;box-shadow:0 2px 8px #0001}
-.notif-bell summary::-webkit-details-marker{display:none}
 .notif-count{position:absolute;top:-4px;right:-4px;background:#a44135;color:#fff;font-size:.65rem;font-weight:800;min-width:18px;height:18px;border-radius:9px;display:grid;place-items:center;padding:0 4px}
-.notif-panel{position:absolute;right:0;top:54px;width:min(320px,80vw);max-height:360px;overflow:auto;background:#fffdf7;border:1px solid #e8dfcb;border-radius:14px;box-shadow:0 14px 40px #0002;padding:14px;z-index:15}
-.notif-panel h4{margin:0 0 10px}
-.notif-item{padding:10px 0;border-bottom:1px solid #e8dfcb}
-.notif-item:last-child{border-bottom:0}
-.notif-item p{margin:4px 0;font-size:.88rem;color:var(--ink)}
+.inbox-list{display:flex;flex-direction:column;background:#fffdf7;border:1px solid #e8dfcb;border-radius:16px;overflow:hidden;box-shadow:0 5px 20px #574a2810}
+.inbox-row{border-bottom:1px solid #e8dfcb}
+.inbox-row:last-child{border-bottom:0}
+.inbox-row summary{list-style:none;cursor:pointer;display:flex;align-items:flex-start;gap:14px;padding:16px 18px}
+.inbox-row summary::-webkit-details-marker{display:none}
+.inbox-row:hover summary{background:#fdf6e0}
+.inbox-icon{flex:0 0 40px;width:40px;height:40px;border-radius:50%;background:#e2f1e6;color:var(--royal);display:grid;place-items:center;font-size:1.1rem}
+.inbox-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.inbox-title{font-weight:700;color:var(--ink)}
+.inbox-preview{color:var(--muted);font-size:.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.inbox-row[open] .inbox-preview{display:none}
+.inbox-row[open] summary{background:#fdf6e0}
+.inbox-time{flex:0 0 auto;color:var(--muted);font-size:.78rem;white-space:nowrap;padding-top:2px}
+.inbox-body{padding:0 18px 18px 74px;color:var(--ink)}
 .leader-card{text-align:center;padding:32px 24px}
 .leader-photo{width:120px;height:120px;border-radius:50%;object-fit:cover;margin:0 auto 18px;display:block;border:4px solid #fff;box-shadow:0 6px 20px #17382c22}
 .leader-photo-placeholder{display:grid;place-items:center;background:var(--royal);color:#fff;font:700 2.6rem Fraunces}
@@ -1151,9 +1168,8 @@ case '/dashboard':
     } catch (Throwable $e) {}
     $dashAvatar = profile_src($user); $dashPhoto = $dashAvatar ? '<img class="dashboard-avatar" src="'.e($dashAvatar).'" alt="Profile photo of '.e($user['name']).'">' : '<div class="dashboard-avatar dashboard-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>';
     $eventCards=''; foreach($events as $event) $eventCards.='<article class="card"><p class="eyebrow">Upcoming event</p><h3>'.e($event['title']).'</h3><p>'.e($event['description']).'</p><p class="muted">'.e($event['location'] ?? '').($event['event_date']?' · '.e(date('M j, Y g:i A', strtotime($event['event_date']))):'').'</p></article>';
-    $notifPanelItems=''; foreach($notifications as $notice) $notifPanelItems.='<div class="notif-item"><strong>'.e($notice['title']).'</strong><p>'.e($notice['message']).'</p><small class="muted">'.e(date('M j, Y', strtotime($notice['created_at']))).'</small></div>';
     $notifCount = count($notifications);
-    $notifBell = '<details class="notif-bell"><summary aria-label="Notifications">🔔'.($notifCount ? '<span class="notif-count">'.$notifCount.'</span>' : '').'</summary><div class="notif-panel"><h4>Notifications</h4>'.($notifPanelItems ?: '<p class="muted">No notifications yet.</p>').'</div></details>';
+    $notifBell = '<a class="notif-bell-link" href="/notifications" aria-label="Notifications">🔔'.($notifCount ? '<span class="notif-count">'.$notifCount.'</span>' : '').'</a>';
     $dashBadge = badge_display($user['membership_badge'] ?? null); $membershipStat = $user['membership'] ? '<span class="badge-chip '.e($dashBadge['class']).'">'.$dashBadge['icon'].' Active Member</span>'.($user['membership_id']?'<br><small class="muted">'.e($user['membership_id']).'</small>':'') : '<span class="muted">Not active</span>';
     $content='<div class="page"><div class="dashboard-top"><div class="dashboard-welcome">'.$dashPhoto.'<div><p class="eyebrow">Member space</p><h1>Welcome, '.e($user['name']).'</h1><p class="muted">Your profile photo appears here after you add it from your profile page.</p></div></div>'.$notifBell.'</div><div class="stats"><div class="stat"><strong>'.$membershipStat.'</strong><span>Membership status</span></div><div class="stat"><strong>'.count($events).'</strong><span>Upcoming events</span></div><div class="stat"><strong>'.$notifCount.'</strong><span>Notifications</span></div></div><section class="section" style="margin-top:0"><p class="eyebrow">Your membership</p><h2>Membership card</h2>'.membership_card_html($user).'</section><section class="section"><p class="eyebrow">Stay connected</p><h2>Upcoming events</h2><div class="grid">'.($eventCards ?: '<article class="card"><p class="muted">No upcoming events yet.</p></article>').'</div></section><div class="grid"><article class="card"><h3>Your profile</h3><p>'.e($user['email']).'</p><a class="btn" href="/profile">Edit profile</a></article><article class="card"><h3>Grow with us</h3><p>Activate your membership and join the next community experience.</p><a class="btn gold" href="/apply-membership">Membership Registration</a></article></div></div>'; break;
 case '/profile':
@@ -1189,8 +1205,12 @@ case '/notifications':
         $allNotifications = db()->query("SELECT title, message, created_at FROM notifications WHERE audience IN {$audienceSql} ORDER BY created_at DESC")->fetchAll();
     } catch (Throwable $e) {}
     $notifPageItems = '';
-    foreach ($allNotifications as $notice) { $notifPageItems .= '<article class="card notif-page-item"><h3>'.e($notice['title']).'</h3><p>'.nl2br(e($notice['message'])).'</p><p class="muted" style="font-size:.8rem">'.e(date('M j, Y g:i A', strtotime($notice['created_at']))).'</p></article>'; }
-    $content = '<div class="page"><p class="eyebrow">Member space</p><h1>Notifications</h1><p class="lead">Updates the admin team has shared with members.</p>'.($notifPageItems ? '<div class="grid">'.$notifPageItems.'</div>' : '<div class="card"><p class="muted">No notifications yet.</p></div>').'</div>';
+    foreach ($allNotifications as $notice) {
+        $preview = trim((string)$notice['message']);
+        $preview = mb_strlen($preview) > 90 ? mb_substr($preview, 0, 90) . '…' : $preview;
+        $notifPageItems .= '<details class="inbox-row"><summary><span class="inbox-icon">🔔</span><span class="inbox-main"><span class="inbox-title">'.e($notice['title']).'</span><span class="inbox-preview">'.e($preview).'</span></span><span class="inbox-time">'.e(date('M j', strtotime($notice['created_at']))).'</span></summary><div class="inbox-body"><p>'.nl2br(e($notice['message'])).'</p><p class="muted" style="font-size:.8rem;margin-top:10px">'.e(date('M j, Y g:i A', strtotime($notice['created_at']))).'</p></div></details>';
+    }
+    $content = '<div class="page"><p class="eyebrow">Member space</p><h1>Notifications</h1><p class="lead">Updates the admin team has shared with members. Tap one to read it in full.</p>'.($notifPageItems ? '<div class="inbox-list">'.$notifPageItems.'</div>' : '<div class="card"><p class="muted">No notifications yet.</p></div>').'</div>';
     break;
 case '/admin':
     $active = $revenue = $posts = 0;
