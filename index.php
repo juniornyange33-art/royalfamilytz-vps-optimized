@@ -161,6 +161,45 @@ function membership_card_html(array $user): string {
     $photoHtml = $avatar ? '<img class="membership-card-photo" src="'.e($avatar).'" alt="Profile photo">' : '<div class="membership-card-photo membership-card-initial">'.e(strtoupper(substr($user['name'],0,1))).'</div>';
     return '<div class="membership-card" style="background:'.$badge['gradient'].'"><div class="membership-card-top"><span class="badge-chip '.e($badge['class']).'">'.$badge['icon'].' '.e($badge['label']).'</span><span class="membership-status-pill">● Active Member</span></div><div class="membership-card-body">'.$photoHtml.'<div><h3>'.e($user['name']).'</h3><p>Royal Family TZ Member</p><p class="membership-card-id">Membership ID: '.e($user['membership_id'] ?: 'Pending confirmation').'</p></div></div></div>';
 }
+function trip_booking_ticket_info(int $bookingId, ?int $userId = null): ?array {
+    ensure_ticket_column();
+    $sql = 'SELECT b.id AS booking_id, b.guests, b.ticket_sent_at, u.name AS user_name, u.email AS user_email, u.membership_id, u.membership_badge, t.title AS trip_title, t.destination, t.trip_date, t.meeting_point, p.name AS package_name, tx.amount, tx.currency, tx.order_reference FROM trip_bookings b JOIN transactions tx ON tx.id = b.transaction_id JOIN users u ON u.id = b.user_id JOIN trips t ON t.id = b.trip_id JOIN trip_packages p ON p.id = b.package_id WHERE b.id = ?';
+    $params = [(int)$bookingId];
+    if ($userId !== null) {
+        $sql .= ' AND b.user_id = ?';
+        $params[] = (int)$userId;
+    }
+    $sql .= ' LIMIT 1';
+    $stmt = db()->prepare($sql);
+    $stmt->execute($params);
+    $row = $stmt->fetch();
+    if (!$row) {
+        return null;
+    }
+
+    $badge = badge_display($row['membership_badge'] ?? null);
+    $dateLine = $row['trip_date'] ? date('l, F j, Y', strtotime($row['trip_date'])) : 'Date to be confirmed';
+    return [
+        'ticket_id' => 'RFTZ-' . (string)$row['order_reference'],
+        'name' => (string)($row['user_name'] ?? 'Guest'),
+        'email' => (string)($row['user_email'] ?? ''),
+        'membership_id' => (string)($row['membership_id'] ?? ''),
+        'trip_title' => (string)($row['trip_title'] ?? ''),
+        'destination' => (string)($row['destination'] ?? ''),
+        'date' => $dateLine,
+        'package' => (string)($row['package_name'] ?? ''),
+        'meeting_point' => (string)($row['meeting_point'] ?? 'To be announced'),
+        'order' => (string)$row['order_reference'],
+        'guests' => (int)($row['guests'] ?? 1),
+        'badge' => $badge,
+        'booking_id' => (int)$row['booking_id'],
+        'amount' => (float)($row['amount'] ?? 0),
+        'currency' => (string)($row['currency'] ?? 'TZS'),
+        'ticket_sent_at' => $row['ticket_sent_at'] ?? null,
+        'user_email' => (string)($row['user_email'] ?? ''),
+        'user_name' => (string)($row['user_name'] ?? 'Guest'),
+    ];
+}
 function send_membership_signup_confirmation_email(string $orderReference): void {
     try {
         ensure_membership_applications_table();
@@ -181,51 +220,36 @@ function send_membership_signup_confirmation_email(string $orderReference): void
 }
 function send_trip_ticket_email(string $orderReference): void {
     try {
-        ensure_ticket_column();
         $stmt = db()->prepare('SELECT b.id AS booking_id, b.guests, b.ticket_sent_at, u.name AS user_name, u.email AS user_email, u.membership_id, u.membership_badge, t.title AS trip_title, t.destination, t.trip_date, t.meeting_point, p.name AS package_name, tx.amount, tx.currency, tx.order_reference FROM trip_bookings b JOIN transactions tx ON tx.id = b.transaction_id JOIN users u ON u.id = b.user_id JOIN trips t ON t.id = b.trip_id JOIN trip_packages p ON p.id = b.package_id WHERE tx.order_reference = ? LIMIT 1');
         $stmt->execute([$orderReference]);
         $row = $stmt->fetch();
         if (!$row || !empty($row['ticket_sent_at']) || !mail_configured()) return;
 
-        $badge = badge_display($row['membership_badge'] ?? null);
-        $dateLine = $row['trip_date'] ? date('l, F j, Y', strtotime($row['trip_date'])) : 'Date to be confirmed';
-        $ticketInfo = [
-            'ticket_id' => 'RFTZ-' . (string)$row['order_reference'],
-            'name' => (string)($row['user_name'] ?? 'Guest'),
-            'email' => (string)($row['user_email'] ?? ''),
-            'membership_id' => (string)($row['membership_id'] ?? ''),
-            'trip_title' => (string)($row['trip_title'] ?? ''),
-            'destination' => (string)($row['destination'] ?? ''),
-            'date' => $dateLine,
-            'package' => (string)($row['package_name'] ?? ''),
-            'meeting_point' => (string)($row['meeting_point'] ?? 'To be announced'),
-            'order' => (string)$row['order_reference'],
-            'guests' => (int)($row['guests'] ?? 1),
-        ];
+        $ticketInfo = trip_booking_ticket_info((int)$row['booking_id']);
+        if (!$ticketInfo) return;
 
         $pdf = generate_ticket_pdf($ticketInfo);
         if ($pdf === '') { return; }
 
-        $body = "Hello {$row['user_name']},\n\n"
-            . "Your Royal Family TZ trip ticket is confirmed for {$row['trip_title']} ({$row['destination']}).\n\n"
-            . "Package: {$row['package_name']}\n"
-            . "Guests: {$row['guests']}\n"
-            . "Date: {$dateLine}\n"
-            . "Meeting point: " . ($row['meeting_point'] ?: 'To be announced') . "\n"
-            . "Amount paid: {$row['currency']} " . number_format((float)$row['amount'], 2) . "\n"
-            . "Booking reference: {$row['order_reference']}\n\n"
-            . "Membership status: {$badge['icon']} {$badge['label']}" . (!empty($row['membership_id']) ? " (ID: {$row['membership_id']})" : '') . "\n\n"
+        $body = "Hello {$ticketInfo['user_name']},\n\n"
+            . "Your Royal Family TZ trip ticket is confirmed for {$ticketInfo['trip_title']} ({$ticketInfo['destination']}).\n\n"
+            . "Package: {$ticketInfo['package']}\n"
+            . "Guests: {$ticketInfo['guests']}\n"
+            . "Date: {$ticketInfo['date']}\n"
+            . "Meeting point: " . ($ticketInfo['meeting_point'] ?: 'To be announced') . "\n"
+            . "Amount paid: {$ticketInfo['currency']} " . number_format((float)$ticketInfo['amount'], 2) . "\n"
+            . "Booking reference: {$ticketInfo['order']}\n\n"
+            . "Membership status: {$ticketInfo['badge']['icon']} {$ticketInfo['badge']['label']}" . (!empty($ticketInfo['membership_id']) ? " (ID: {$ticketInfo['membership_id']})" : '') . "\n\n"
             . "Your PDF ticket is attached to this email. Please keep it with you and present your membership details at check-in.\n\n"
             . "See you there,\nRoyal Family TZ";
 
         $attachment = [
-            'name' => 'royalfamilytz-trip-ticket-' . $row['order_reference'] . '.pdf',
-            'type' => 'application/pdf',
-            'data' => $pdf,
+            'filename' => 'royalfamilytz-trip-ticket-' . $ticketInfo['order'] . '.pdf',
+            'content' => $pdf,
         ];
 
-        if (send_email((string)$row['user_email'], 'Your Royal Family TZ ticket — ' . $row['trip_title'], $body, '', [$attachment])) {
-            db()->prepare('UPDATE trip_bookings SET ticket_sent_at = NOW() WHERE id = ?')->execute([(int)$row['booking_id']]);
+        if (send_email((string)$ticketInfo['email'], 'Your Royal Family TZ ticket — ' . $ticketInfo['trip_title'], $body, '', [$attachment])) {
+            db()->prepare('UPDATE trip_bookings SET ticket_sent_at = NOW() WHERE id = ?')->execute([(int)$ticketInfo['booking_id']]);
         }
     } catch (Throwable $e) { /* Ticket email is best-effort; booking/payment already succeeded. */ }
 }
@@ -236,6 +260,32 @@ $basePath = ($basePath === '.' || $basePath === '/') ? '' : rtrim($basePath, '/'
 if ($basePath !== '' && ($path === $basePath || str_starts_with($path, $basePath . '/'))) { $path = substr($path, strlen($basePath)) ?: '/'; }
 $user = $_SESSION['user'] ?? null;
 
+if ($path === '/profile/ticket' && $user && !empty($_GET['id'])) {
+    try {
+        $bookingId = (int)($_GET['id'] ?? 0);
+        $ticketInfo = trip_booking_ticket_info($bookingId, (int)$user['id']);
+        if (!$ticketInfo) {
+            http_response_code(404);
+            echo 'Ticket not found.';
+            exit;
+        }
+        $pdf = generate_ticket_pdf($ticketInfo);
+        if ($pdf === '') {
+            http_response_code(500);
+            echo 'Unable to generate ticket.';
+            exit;
+        }
+        header('Content-Type: application/pdf');
+        header('Content-Disposition: attachment; filename="royalfamilytz-trip-ticket-' . $ticketInfo['order'] . '.pdf"');
+        header('Content-Length: ' . strlen($pdf));
+        echo $pdf;
+        exit;
+    } catch (Throwable $e) {
+        http_response_code(500);
+        echo 'Ticket generation failed.';
+        exit;
+    }
+}
 if ($path === '/logout') { session_destroy(); header('Location: /'); exit; }
 if ($path === '/verify-email') {
     try { ensure_profile_columns(); $token = (string)($_GET['token'] ?? ''); $hash = hash('sha256', $token); $stmt = db()->prepare('SELECT id, name, email FROM users WHERE email_verification_token = ? AND email_verification_expires_at > NOW() LIMIT 1'); $stmt->execute([$hash]); $account = $stmt->fetch(); if (!$account) throw new RuntimeException('This verification link is invalid or has expired.'); db()->prepare('UPDATE users SET email_verified_at = NOW(), email_verification_token = NULL, email_verification_expires_at = NULL WHERE id = ?')->execute([(int)$account['id']]); if (mail_configured()) { try { send_email((string)$account['email'], 'Welcome to Royal Family TZ', "Hello {$account['name']},\n\nThank you for verifying your email and joining Royal Family TZ. Your account is now active. You can sign in and explore events, trips, membership, and community updates.\n\nWelcome to the family,\nRoyal Family TZ"); } catch (Throwable $welcomeError) {} } $_SESSION['flash'] = 'Email verified successfully. A welcome message has been sent to your email.'; } catch (Throwable $e) { $_SESSION['flash'] = $e->getMessage(); } header('Location: /login'); exit;
@@ -1228,7 +1278,8 @@ case '/profile':
         foreach ($tStmt->fetchAll() as $ticket) {
             $qrData = 'RFTZ|' . ($user['membership_id'] ?: ('USER-' . $user['id'])) . '|' . $ticket['order_reference'];
             $qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' . rawurlencode($qrData);
-            $ticketCards .= '<article class="ticket-card"><div class="ticket-info"><p class="eyebrow">'.e($ticket['destination']).'</p><h3>'.e($ticket['title']).'</h3><p class="muted">'.($ticket['trip_date'] ? e(date('M j, Y', strtotime($ticket['trip_date']))) : 'Date to be confirmed').' · '.e((string)$ticket['guests']).' guest(s)</p><p class="muted">Ref: '.e((string)$ticket['order_reference']).'</p><button class="btn" type="button" onclick="window.print()">Print / save as PDF</button></div><img class="ticket-qr" src="'.e($qrUrl).'" alt="Ticket QR code"></article>';
+            $downloadUrl = '/profile/ticket?id=' . (int)$ticket['id'];
+            $ticketCards .= '<article class="ticket-card"><div class="ticket-info"><p class="eyebrow">'.e($ticket['destination']).'</p><h3>'.e($ticket['title']).'</h3><p class="muted">'.($ticket['trip_date'] ? e(date('M j, Y', strtotime($ticket['trip_date']))) : 'Date to be confirmed').' · '.e((string)$ticket['guests']).' guest(s)</p><p class="muted">Ref: '.e((string)$ticket['order_reference']).'</p><div class="ticket-actions"><a class="btn" href="'.e($downloadUrl).'" target="_blank" rel="noopener">Download PDF</a></div></div><img class="ticket-qr" src="'.e($qrUrl).'" alt="Ticket QR code"></article>';
         }
     } catch (Throwable $e) {}
     $ticketsSection = $ticketCards ? '<section class="section"><p class="eyebrow">Your tickets</p><h2>Digital tickets</h2><div class="ticket-grid">'.$ticketCards.'</div></section>' : '';
