@@ -303,7 +303,15 @@ if ($path === '/api/clickpesa/webhook' && $_SERVER['REQUEST_METHOD'] === 'POST')
     try {
         $data = $payload['data'] ?? []; $reference = $data['orderReference'] ?? '';
         if ($reference !== '') {
-            $event = strtoupper(trim((string)($payload['event'] ?? ''))); $providerStatus = strtoupper(trim((string)($data['status'] ?? ''))); $status = ($event === 'PAYMENT RECEIVED' || ($event === '' && $providerStatus === 'SUCCESS')) ? 'paid' : (($event === 'PAYMENT FAILED' || ($event === '' && $providerStatus === 'FAILED')) ? 'failed' : null);
+            $event = strtoupper(trim((string)($payload['event'] ?? '')));
+            $providerStatus = strtoupper(trim((string)($data['status'] ?? '')));
+            $normalized = $event !== '' ? $event : $providerStatus;
+            $status = null;
+            if ($normalized === 'PAYMENT RECEIVED' || $normalized === 'SUCCESS' || $normalized === 'SUCCESSFUL' || $normalized === 'PAID' || str_contains($normalized, 'SUCCESS') || str_contains($normalized, 'PAID')) {
+                $status = 'paid';
+            } elseif ($normalized === 'PAYMENT FAILED' || $normalized === 'FAILED' || $normalized === 'CANCELLED' || $normalized === 'CANCELED' || str_contains($normalized, 'FAILED') || str_contains($normalized, 'CANCEL')) {
+                $status = 'failed';
+            }
             if ($status) {
                 db()->prepare('UPDATE transactions SET status = ?, provider_ref = COALESCE(provider_ref, ?), failure_message = ? WHERE order_reference = ?')->execute([$status, $data['id'] ?? null, $data['message'] ?? null, $reference]);
                 if ($status === 'paid') {

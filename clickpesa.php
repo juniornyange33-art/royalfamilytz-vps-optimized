@@ -48,6 +48,16 @@ function cp_with_checksum(array $payload): array {
     return $payload;
 }
 
+function cp_verify_checksum(array $payload): bool {
+    $provided = trim((string)($payload['checksum'] ?? $payload['checksumMethod'] ?? ''));
+    if ($provided === '') {
+        return false;
+    }
+
+    $expected = cp_checksum($payload);
+    return hash_equals($expected, $provided) || hash_equals(strtolower($expected), strtolower($provided));
+}
+
 function cp_token(): string {
     static $token = null;
     if ($token !== null) return $token;
