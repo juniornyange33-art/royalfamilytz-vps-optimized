@@ -10,27 +10,44 @@ if (file_exists(__DIR__ . '/local-config.php')) {
 function sendResendEmail($to, $subject, $htmlBody, $attachments = []) {
     global $config;
 
-    // Retrieve credentials
     $apiKey = getenv('RESEND_API_KEY') ?: ($config['RESEND_API_KEY'] ?? '');
-    
-    // MUST use verified domain for sending (Resend requirement)
-    $from = 'Royal Family TZ <support@royalfamilytz.org>'; 
+    $from = 'Royal Family TZ <support@royalfamilytz.org>';
 
     if (empty($apiKey)) {
         error_log("Resend API Key is missing.");
         return false;
     }
 
+    $normalizedAttachments = [];
+    foreach ($attachments as $attachment) {
+        if (!is_array($attachment) || empty($attachment)) {
+            continue;
+        }
+
+        if (isset($attachment['filename']) || isset($attachment['content'])) {
+            $normalizedAttachments[] = [
+                'filename' => (string)($attachment['filename'] ?? $attachment['name'] ?? 'attachment'),
+                'content' => (string)($attachment['content'] ?? $attachment['data'] ?? ''),
+            ];
+            continue;
+        }
+
+        $normalizedAttachments[] = [
+            'filename' => (string)($attachment['name'] ?? 'attachment'),
+            'content' => (string)($attachment['data'] ?? ''),
+        ];
+    }
+
     $payload = [
         'from' => $from,
         'to' => is_array($to) ? array_values($to) : [$to],
-        'reply_to' => 'royalfamilytz.org@gmail.com', // Replies go directly to your Gmail!
+        'reply_to' => 'royalfamilytz.org@gmail.com',
         'subject' => $subject,
-        'html' => $htmlBody
+        'html' => $htmlBody,
     ];
 
-    if (!empty($attachments)) {
-        $payload['attachments'] = $attachments;
+    if (!empty($normalizedAttachments)) {
+        $payload['attachments'] = $normalizedAttachments;
     }
 
     $ch = curl_init('https://api.resend.com/emails');

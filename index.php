@@ -296,22 +296,19 @@ if ($path === '/api/transaction-status' && $_SERVER['REQUEST_METHOD'] === 'GET')
     try {
         $reference = trim((string)($_GET['reference'] ?? ''));
         if ($reference === '') throw new RuntimeException('Missing transaction reference.');
-        $stmt = db()->prepare('SELECT t.status, t.type, t.amount, t.currency, t.order_reference, COALESCE(u.name, ?) AS user_name FROM transactions t LEFT JOIN users u ON u.id = t.user_id WHERE t.order_reference = ? AND (t.user_id = ? OR (? IS NULL AND t.user_id IS NULL)) LIMIT 1');
-        $uid = $user['id'] ?? null;
-        $stmt->execute(['Donor', $reference, $uid, $uid]);
+        $stmt = db()->prepare('SELECT t.id, t.status, t.type, t.amount, t.currency, t.order_reference, t.user_id, COALESCE(u.name, ?) AS user_name FROM transactions t LEFT JOIN users u ON u.id = t.user_id WHERE t.order_reference = ? LIMIT 1');
+        $stmt->execute(['Donor', $reference]);
         $tx = $stmt->fetch();
         if (!$tx) { http_response_code(404); echo json_encode(['error' => 'Transaction not found']); exit; }
         if ($tx['status'] === 'paid' || $tx['status'] === 'failed') { if (($_SESSION['active_payment']['reference'] ?? '') === $reference) unset($_SESSION['active_payment']); }
         if ($tx['status'] === 'paid') {
             try {
-                $paidTxStmt = db()->prepare('SELECT id, user_id, type, tier FROM transactions WHERE order_reference = ? LIMIT 1');
-                $paidTxStmt->execute([$reference]);
-                $paidTx = $paidTxStmt->fetch();
-                if ($paidTx && $paidTx['type'] === 'trip') {
+                $paidTx = $tx;
+                if ($paidTx['type'] === 'trip') {
                     try { db()->prepare('UPDATE trip_bookings b JOIN transactions t ON t.id = b.transaction_id SET b.status = \'paid\' WHERE t.order_reference = ?')->execute([$reference]); } catch (Throwable $ignore) {}
                     send_trip_ticket_email($reference);
                 }
-                if ($paidTx && $paidTx['type'] === 'membership_signup') {
+                if ($paidTx['type'] === 'membership_signup') {
                     send_membership_signup_confirmation_email($reference);
                 }
             } catch (Throwable $notifyError) {}
