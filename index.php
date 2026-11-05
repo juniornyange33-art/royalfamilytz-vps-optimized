@@ -7,6 +7,7 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/clickpesa.php';
 require_once __DIR__ . '/google.php';
 require_once __DIR__ . '/mailer.php';
+require_once __DIR__ . '/lib/tickets.php';
 
 const APP_NAME = 'Royal Family TZ';
 
@@ -185,10 +186,28 @@ function send_trip_ticket_email(string $orderReference): void {
         $stmt->execute([$orderReference]);
         $row = $stmt->fetch();
         if (!$row || !empty($row['ticket_sent_at']) || !mail_configured()) return;
+
         $badge = badge_display($row['membership_badge'] ?? null);
         $dateLine = $row['trip_date'] ? date('l, F j, Y', strtotime($row['trip_date'])) : 'Date to be confirmed';
+        $ticketInfo = [
+            'ticket_id' => 'RFTZ-' . (string)$row['order_reference'],
+            'name' => (string)($row['user_name'] ?? 'Guest'),
+            'email' => (string)($row['user_email'] ?? ''),
+            'membership_id' => (string)($row['membership_id'] ?? ''),
+            'trip_title' => (string)($row['trip_title'] ?? ''),
+            'destination' => (string)($row['destination'] ?? ''),
+            'date' => $dateLine,
+            'package' => (string)($row['package_name'] ?? ''),
+            'meeting_point' => (string)($row['meeting_point'] ?? 'To be announced'),
+            'order' => (string)$row['order_reference'],
+            'guests' => (int)($row['guests'] ?? 1),
+        ];
+
+        $pdf = generate_ticket_pdf($ticketInfo);
+        if ($pdf === '') { return; }
+
         $body = "Hello {$row['user_name']},\n\n"
-            . "Your ticket is confirmed for {$row['trip_title']} ({$row['destination']}).\n\n"
+            . "Your Royal Family TZ trip ticket is confirmed for {$row['trip_title']} ({$row['destination']}).\n\n"
             . "Package: {$row['package_name']}\n"
             . "Guests: {$row['guests']}\n"
             . "Date: {$dateLine}\n"
@@ -196,9 +215,16 @@ function send_trip_ticket_email(string $orderReference): void {
             . "Amount paid: {$row['currency']} " . number_format((float)$row['amount'], 2) . "\n"
             . "Booking reference: {$row['order_reference']}\n\n"
             . "Membership status: {$badge['icon']} {$badge['label']}" . (!empty($row['membership_id']) ? " (ID: {$row['membership_id']})" : '') . "\n\n"
-            . "Please keep this email as your ticket and present your membership ID at check-in.\n\n"
+            . "Your PDF ticket is attached to this email. Please keep it with you and present your membership details at check-in.\n\n"
             . "See you there,\nRoyal Family TZ";
-        if (send_email((string)$row['user_email'], 'Your Royal Family TZ ticket — ' . $row['trip_title'], $body)) {
+
+        $attachment = [
+            'name' => 'royalfamilytz-trip-ticket-' . $row['order_reference'] . '.pdf',
+            'type' => 'application/pdf',
+            'data' => $pdf,
+        ];
+
+        if (send_email((string)$row['user_email'], 'Your Royal Family TZ ticket — ' . $row['trip_title'], $body, '', [$attachment])) {
             db()->prepare('UPDATE trip_bookings SET ticket_sent_at = NOW() WHERE id = ?')->execute([(int)$row['booking_id']]);
         }
     } catch (Throwable $e) { /* Ticket email is best-effort; booking/payment already succeeded. */ }

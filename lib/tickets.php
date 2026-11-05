@@ -1,6 +1,14 @@
 <?php
 declare(strict_types=1);
 
+function ticket_logo_image(): ?string {
+    $logoPath = dirname(__DIR__) . '/assets/royal-family-logo.jpg';
+    if (!is_file($logoPath) || !function_exists('imagecreatefromjpeg')) {
+        return null;
+    }
+    return $logoPath;
+}
+
 function generate_ticket_png(array $info): string {
     $w = 820; $h = 380;
     $img = imagecreatetruecolor($w, $h);
@@ -10,30 +18,46 @@ function generate_ticket_png(array $info): string {
     $black = imagecolorallocate($img, 20, 20, 20);
     imagefilledrectangle($img, 0, 0, $w, $h, $bg);
 
-    // Left panel
-    imagefilledrectangle($img, 20, 20, $w-220, $h-20, imagecolorallocate($img, 245, 248, 246));
-    // Title
-    imagestring($img, 5, 40, 30, 'Royal Family TZ - Trip Ticket', $accent);
-    imagestring($img, 4, 40, 72, $info['trip_title'] ?? 'Trip', $black);
-    imagestring($img, 3, 40, 110, 'Passenger: ' . ($info['name'] ?? 'Guest'), $black);
-    imagestring($img, 3, 40, 138, 'Ticket: ' . ($info['ticket_id'] ?? ''), $black);
-    imagestring($img, 3, 40, 166, 'Package: ' . ($info['package'] ?? ''), $muted);
-    imagestring($img, 3, 40, 190, 'Destination: ' . ($info['destination'] ?? ''), $muted);
-    imagestring($img, 3, 40, 214, 'Date: ' . ($info['date'] ?? ''), $muted);
-    imagestring($img, 2, 40, $h-60, 'Order Ref: ' . ($info['order'] ?? ''), $muted);
+    $logoPath = ticket_logo_image();
+    if ($logoPath) {
+        $logo = @imagecreatefromjpeg($logoPath);
+        if ($logo) {
+            $logoW = imagesx($logo);
+            $logoH = imagesy($logo);
+            $scale = 96 / max($logoW, 1);
+            $logoWidth = max(1, (int)round($logoW * $scale));
+            $logoHeight = max(1, (int)round($logoH * $scale));
+            $logoCanvas = imagecreatetruecolor($logoWidth, $logoHeight);
+            imagefill($logoCanvas, 0, 0, imagecolorallocatealpha($logoCanvas, 255, 255, 255, 127));
+            imagecopyresampled($logoCanvas, $logo, 0, 0, 0, 0, $logoWidth, $logoHeight, $logoW, $logoH);
+            imagecopyresampled($img, $logoCanvas, 34, 24, 0, 0, $logoWidth, $logoHeight, $logoWidth, $logoHeight);
+            imagedestroy($logoCanvas);
+            imagedestroy($logo);
+        }
+    }
 
-    // QR (attempt to fetch from Google Charts)
-    $qrData = 'TICKET|' . ($info['ticket_id'] ?? '') . '|' . ($info['order'] ?? '');
-    $qrUrl = 'https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=' . rawurlencode($qrData);
+    imagefilledrectangle($img, 20, 20, $w - 220, $h - 20, imagecolorallocate($img, 245, 248, 246));
+    imagestring($img, 5, 40, 30, 'Royal Family TZ', $accent);
+    imagestring($img, 3, 40, 60, 'Trip Ticket', $black);
+    imagestring($img, 4, 40, 95, $info['trip_title'] ?? 'Trip', $black);
+    imagestring($img, 3, 40, 130, 'Passenger: ' . ($info['name'] ?? 'Guest'), $black);
+    imagestring($img, 3, 40, 154, 'Membership ID: ' . ($info['membership_id'] ?: 'Not assigned'), $black);
+    imagestring($img, 3, 40, 178, 'Email: ' . ($info['email'] ?? 'Not provided'), $muted);
+    imagestring($img, 3, 40, 202, 'Package: ' . ($info['package'] ?? ''), $muted);
+    imagestring($img, 3, 40, 226, 'Destination: ' . ($info['destination'] ?? ''), $muted);
+    imagestring($img, 3, 40, 250, 'Date: ' . ($info['date'] ?? ''), $muted);
+    imagestring($img, 2, 40, $h - 60, 'Order Ref: ' . ($info['order'] ?? ''), $muted);
+
+    $qrData = 'RFTZ|' . ($info['membership_id'] ?: ($info['email'] ?: 'guest')) . '|' . ($info['order'] ?? '') . '|' . ($info['ticket_id'] ?? '');
+    $qrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' . rawurlencode($qrData);
     $qrRaw = @file_get_contents($qrUrl);
     if ($qrRaw !== false) {
         $qrImg = @imagecreatefromstring($qrRaw);
-        if ($qrImg) imagecopyresampled($img, $qrImg, $w-190, 80, 0, 0, 160, 160, imagesx($qrImg), imagesy($qrImg));
+        if ($qrImg) imagecopyresampled($img, $qrImg, $w - 190, 80, 0, 0, 160, 160, imagesx($qrImg), imagesy($qrImg));
         if (isset($qrImg) && is_resource($qrImg)) imagedestroy($qrImg);
     } else {
-        // placeholder box
-        imagerectangle($img, $w-200, 80, $w-40, 240, $muted);
-        imagestring($img, 3, $w-180, 150, 'QR Unavailable', $muted);
+        imagerectangle($img, $w - 200, 80, $w - 40, 240, $muted);
+        imagestring($img, 3, $w - 180, 150, 'QR Unavailable', $muted);
     }
 
     ob_start(); imagepng($img); $data = ob_get_clean(); imagedestroy($img);
@@ -102,7 +126,7 @@ function generate_ticket_pdf(array $info): string {
     $xrefPos = strlen($pdf);
     $pdf .= "xref\n0 " . (count($objData) + 1) . "\n0000000000 65535 f \n";
     foreach ($offsets as $off) {
-        $pdf .= str_pad($off, 10, '0', STR_PAD_LEFT) . " 00000 n \n";
+        $pdf .= str_pad((string)$off, 10, '0', STR_PAD_LEFT) . " 00000 n \n";
     }
     $pdf .= "trailer\n<< /Size " . (count($objData) + 1) . " /Root 1 0 R >>\nstartxref\n{$xrefPos}\n%%EOF\n";
     return $pdf;
