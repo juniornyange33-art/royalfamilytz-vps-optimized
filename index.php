@@ -218,6 +218,12 @@ function send_membership_signup_confirmation_email(string $orderReference): void
         send_email((string)$application['email'], 'Your Royal Family TZ membership is confirmed', $body);
     } catch (Throwable $e) { /* Confirmation email is best-effort; payment already succeeded. */ }
 }
+function sync_paid_trip_bookings(): void {
+    try {
+        db()->prepare("UPDATE trip_bookings b JOIN transactions t ON t.id = b.transaction_id SET b.status = 'paid' WHERE t.status = 'paid' AND b.status <> 'paid'")->execute();
+        db()->prepare("UPDATE trip_bookings b JOIN transactions t ON t.id = b.transaction_id SET b.status = 'cancelled' WHERE t.status = 'failed' AND b.status <> 'cancelled'")->execute();
+    } catch (Throwable $ignore) {}
+}
 function send_trip_ticket_email(string $orderReference): void {
     try {
         $stmt = db()->prepare('SELECT b.id AS booking_id, b.guests, b.ticket_sent_at, u.name AS user_name, u.email AS user_email, u.membership_id, u.membership_badge, t.title AS trip_title, t.destination, t.trip_date, t.meeting_point, p.name AS package_name, tx.amount, tx.currency, tx.order_reference FROM trip_bookings b JOIN transactions tx ON tx.id = b.transaction_id JOIN users u ON u.id = b.user_id JOIN trips t ON t.id = b.trip_id JOIN trip_packages p ON p.id = b.package_id WHERE tx.order_reference = ? LIMIT 1');
@@ -301,6 +307,7 @@ if ($path === '/api/clickpesa/webhook' && $_SERVER['REQUEST_METHOD'] === 'POST')
             if ($status) {
                 db()->prepare('UPDATE transactions SET status = ?, provider_ref = COALESCE(provider_ref, ?), failure_message = ? WHERE order_reference = ?')->execute([$status, $data['id'] ?? null, $data['message'] ?? null, $reference]);
                 if ($status === 'paid') {
+                    sync_paid_trip_bookings();
                     $txStmt = db()->prepare('SELECT id, user_id, type, tier FROM transactions WHERE order_reference = ? LIMIT 1');
                     $txStmt->execute([$reference]);
                     $tx = $txStmt->fetch();
@@ -350,6 +357,7 @@ if ($path === '/api/transaction-status' && $_SERVER['REQUEST_METHOD'] === 'GET')
         $stmt->execute(['Donor', $reference]);
         $tx = $stmt->fetch();
         if (!$tx) { http_response_code(404); echo json_encode(['error' => 'Transaction not found']); exit; }
+        sync_paid_trip_bookings();
         if ($tx['status'] === 'paid' || $tx['status'] === 'failed') { if (($_SESSION['active_payment']['reference'] ?? '') === $reference) unset($_SESSION['active_payment']); }
         if ($tx['status'] === 'paid') {
             try {
@@ -520,6 +528,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'admin_user_delete' && $user && $user['role'] === 'admin') {
         try { $id = (int)($_POST['user_id'] ?? 0); if ($id === (int)$user['id']) throw new RuntimeException('You cannot delete the account you are logged in with.'); db()->prepare('DELETE FROM users WHERE id = ?')->execute([$id]); $_SESSION['flash'] = 'User deleted.'; } catch (Throwable $e) { $_SESSION['flash'] = 'User could not be deleted: ' . $e->getMessage(); }
         header('Location: /admin/users'); exit;
+    }
+    if ($action === 'refresh_trip_tickets' && $user) {
+        try {
+            sync_paid_trip_bookings();
+            $_SESSION['flash'] = 'Your trip tickets were refreshed.';
+        } catch (Throwable $e) {
+            $_SESSION['flash'] = 'Tickets could not be refreshed right now.';
+        }
+        header('Location: /profile'); exit;
     }
     if ($action === 'trip_book' && $user) {
         try { ensure_trip_tables(); $tripId = (int)($_POST['trip_id'] ?? 0); $packageId = (int)($_POST['package_id'] ?? 0); $guests = max(1, (int)($_POST['guests'] ?? 1)); $stmt = db()->prepare('SELECT t.title, p.name, p.price, p.capacity FROM trips t JOIN trip_packages p ON p.trip_id = t.id WHERE t.id = ? AND p.id = ? AND t.published = 1'); $stmt->execute([$tripId, $packageId]); $package = $stmt->fetch(); if (!$package) throw new RuntimeException('That trip package is no longer available.'); if ($package['capacity'] !== null) { $used = db()->prepare("SELECT COALESCE(SUM(guests),0) FROM trip_bookings WHERE package_id = ? AND status IN ('pending','paid')"); $used->execute([$packageId]); if ((int)$used->fetchColumn() + $guests > (int)$package['capacity']) throw new RuntimeException('There are not enough places left in this package.'); } $amount = (float)$package['price'] * $guests; $reference = 'TP' . date('ymdHis') . strtoupper(bin2hex(random_bytes(2))); // 18 chars, within ClickPesa's 20-character limit
@@ -1262,6 +1279,7 @@ case '/dashboard':
     $content='<div class="page"><div class="dashboard-top"><div class="dashboard-welcome">'.$dashPhoto.'<div><p class="eyebrow">Member space</p><h1>Welcome, '.e($user['name']).'</h1><p class="muted">Your profile photo appears here after you add it from your profile page.</p></div></div>'.$notifBell.'</div><div class="stats"><div class="stat"><strong>'.$membershipStat.'</strong><span>Membership status</span></div><div class="stat"><strong>'.count($events).'</strong><span>Upcoming events</span></div><div class="stat"><strong>'.$notifCount.'</strong><span>Notifications</span></div></div><section class="section" style="margin-top:0"><p class="eyebrow">Your membership</p><h2>Membership card</h2>'.membership_card_html($user).'</section><section class="section"><p class="eyebrow">Stay connected</p><h2>Upcoming events</h2><div class="grid">'.($eventCards ?: '<article class="card"><p class="muted">No upcoming events yet.</p></article>').'</div></section><div class="grid"><article class="card"><h3>Your profile</h3><p>'.e($user['email']).'</p><a class="btn" href="/profile">Edit profile</a></article><article class="card"><h3>Grow with us</h3><p>Activate your membership and join the next community experience.</p><a class="btn gold" href="/apply-membership">Membership Registration</a></article></div></div>'; break;
 case '/profile':
     try {
+        sync_paid_trip_bookings();
         ensure_membership_badge_column();
         $freshStmt = db()->prepare('SELECT membership_active, membership_id, membership_badge FROM users WHERE id = ? LIMIT 1');
         $freshStmt->execute([$user['id']]);
@@ -1272,8 +1290,9 @@ case '/profile':
     $membershipCard = membership_card_html($user);
     $ticketCards = '';
     try {
+        sync_paid_trip_bookings();
         ensure_ticket_column();
-        $tStmt = db()->prepare("SELECT b.id, b.guests, t.title, t.destination, t.trip_date, tx.order_reference FROM trip_bookings b JOIN trips t ON t.id = b.trip_id LEFT JOIN transactions tx ON tx.id = b.transaction_id WHERE b.user_id = ? AND b.status = 'paid' ORDER BY t.trip_date DESC");
+        $tStmt = db()->prepare("SELECT b.id, b.guests, t.title, t.destination, t.trip_date, tx.order_reference, tx.status AS tx_status FROM trip_bookings b JOIN trips t ON t.id = b.trip_id LEFT JOIN transactions tx ON tx.id = b.transaction_id WHERE b.user_id = ? AND (b.status = 'paid' OR COALESCE(tx.status, '') = 'paid') ORDER BY t.trip_date DESC");
         $tStmt->execute([$user['id']]);
         foreach ($tStmt->fetchAll() as $ticket) {
             $qrData = 'RFTZ|' . ($user['membership_id'] ?: ('USER-' . $user['id'])) . '|' . $ticket['order_reference'];
@@ -1282,7 +1301,7 @@ case '/profile':
             $ticketCards .= '<article class="ticket-card"><div class="ticket-info"><p class="eyebrow">'.e($ticket['destination']).'</p><h3>'.e($ticket['title']).'</h3><p class="muted">'.($ticket['trip_date'] ? e(date('M j, Y', strtotime($ticket['trip_date']))) : 'Date to be confirmed').' · '.e((string)$ticket['guests']).' guest(s)</p><p class="muted">Ref: '.e((string)$ticket['order_reference']).'</p><div class="ticket-actions"><a class="btn" href="'.e($downloadUrl).'" target="_blank" rel="noopener">Download PDF</a></div></div><img class="ticket-qr" src="'.e($qrUrl).'" alt="Ticket QR code"></article>';
         }
     } catch (Throwable $e) {}
-    $ticketsSection = $ticketCards ? '<section class="section"><p class="eyebrow">Your tickets</p><h2>Digital tickets</h2><div class="ticket-grid">'.$ticketCards.'</div></section>' : '';
+    $ticketsSection = $ticketCards ? '<section class="section"><p class="eyebrow">Your tickets</p><h2>Digital tickets</h2><div class="ticket-grid">'.$ticketCards.'</div></section>' : '<section class="section"><p class="eyebrow">Your tickets</p><h2>Digital tickets</h2><div class="card"><p class="muted">No paid trip tickets yet. Refresh this page after your payment is confirmed.</p><form method="post"><input type="hidden" name="action" value="refresh_trip_tickets"><button class="btn gold" type="submit">Refresh my tickets</button></form></div></section>';
     $profileNotifCount = count($notifications);
     $profileNotifBell = '<a class="notif-bell-link" href="/notifications" aria-label="Notifications">🔔'.($profileNotifCount ? '<span class="notif-count">'.$profileNotifCount.'</span>' : '').'</a>';
     $content='<div class="page"><div class="dashboard-top" style="margin-bottom:0"><p class="eyebrow" style="margin:0">Member details</p>'.$profileNotifBell.'</div><section class="section" style="margin-top:8px"><h2>Your membership card</h2>'.$membershipCard.'</section>'.$ticketsSection.'<div class="form-card"><p class="eyebrow">Member details</p><h2>Your profile</h2><div class="avatar-picker">'.($avatar?'<img class="profile-avatar" src="'.e($avatar).'" alt="Profile photo">':'<div class="profile-placeholder">'.e(strtoupper(substr($user['name'],0,1))).'</div>').'<label class="camera-button" for="profile_image" title="Add or change profile photo" aria-label="Add or change profile photo">&#128247;</label></div><p class="photo-hint">Tap the camera icon to add or change your photo.</p><form class="form" method="post" enctype="multipart/form-data"><input type="hidden" name="action" value="profile_update"><label>Display name<input name="name" value="'.e($user['name']).'" required></label><label>Email<input value="'.e($user['email']).'" disabled></label><label>Bio<textarea name="bio" rows="4" placeholder="Tell the community about yourself"></textarea></label><input id="profile_image" class="visually-hidden" type="file" name="profile_image" accept="image/jpeg,image/png,image/webp" onchange="this.form.submit()"><button class="btn" type="submit">Save profile</button></form></div></div>'; break;
