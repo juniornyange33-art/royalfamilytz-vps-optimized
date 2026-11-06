@@ -8,7 +8,6 @@ function cp_config(string $key, string $default = ''): string {
         $local = is_file($file) ? (require $file) : [];
     }
 
-    // Map legacy or config array keys to environment variables
     if ($key === 'CLICKPESA_CHECKSUM_KEY' || $key === 'CLICKPESA_CHECKSUM') {
         return getenv('CLICKPESA_CHECKSUM') ?: ($local['clickpesa']['checksum'] ?? $default);
     }
@@ -36,11 +35,50 @@ function cp_canonicalize($value) {
     return $value;
 }
 
+function cp_strip_checksum_fields(mixed $value): mixed {
+    if (!is_array($value)) {
+        return $value;
+    }
+
+    foreach (array_keys($value) as $key) {
+        $normalized = strtolower((string)$key);
+        if (in_array($normalized, ['checksum', 'checksummethod', 'signature', 'hash', 'hmac', 'sign'], true)) {
+            unset($value[$key]);
+            continue;
+        }
+        $value[$key] = cp_strip_checksum_fields($value[$key]);
+    }
+
+    return $value;
+}
+
 function cp_checksum(array $payload): string {
-    $without = $payload;
-    unset($without['checksum'], $without['checksumMethod']);
+    $without = cp_strip_checksum_fields($payload);
     $secret = cp_config('CLICKPESA_CHECKSUM');
     return hash_hmac('sha256', json_encode(cp_canonicalize($without), JSON_UNESCAPED_SLASHES), $secret);
+}
+
+function cp_extract_checksum_value(mixed $value): ?string {
+    if (is_array($value)) {
+        foreach (['checksum', 'checksumMethod', 'signature', 'hash', 'hmac', 'sign'] as $key) {
+            if (array_key_exists($key, $value) && $value[$key] !== null && $value[$key] !== '') {
+                return trim((string)$value[$key]);
+            }
+        }
+        foreach ($value as $nested) {
+            $found = cp_extract_checksum_value($nested);
+            if ($found !== null) {
+                return $found;
+            }
+        }
+        return null;
+    }
+
+    if (is_string($value) && trim($value) !== '') {
+        return trim($value);
+    }
+
+    return null;
 }
 
 function cp_with_checksum(array $payload): array {
@@ -49,13 +87,28 @@ function cp_with_checksum(array $payload): array {
 }
 
 function cp_verify_checksum(array $payload): bool {
-    $provided = trim((string)($payload['checksum'] ?? $payload['checksumMethod'] ?? ''));
-    if ($provided === '') {
+    $provided = cp_extract_checksum_value($payload);
+    if ($provided === null || $provided === '') {
         return false;
     }
 
     $expected = cp_checksum($payload);
     return hash_equals($expected, $provided) || hash_equals(strtolower($expected), strtolower($provided));
+}
+
+function cp_callback_url(): string {
+    $base = getenv('APP_URL');
+    if ($base === false || trim((string)$base) === '') {
+        $local = is_file(__DIR__ . '/local-config.php') ? (require __DIR__ . '/local-config.php') : [];
+        $base = (string)($local['APP_URL'] ?? getenv('APP_URL') ?: '');
+    }
+    $base = trim((string)$base, '/');
+    if ($base === '') {
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $base = $scheme . '://' . $host;
+    }
+    return $base . '/api/clickpesa/webhook';
 }
 
 function cp_token(): string {
@@ -136,11 +189,17 @@ function cp_start_payment(float $amount, string $method, string $phone, string $
     }
 
     if (in_array($method, ['mobile', 'mpesa', 'tigopesa', 'airtelmoney', 'halopesa'], true)) {
+        $callbackUrl = cp_callback_url();
         $payload = [
             'amount'         => (string)$amount,
             'currency'       => 'TZS',
             'orderReference' => $orderReference,
-            'phoneNumber'    => cp_normalize_phone($phone)
+            'phoneNumber'    => cp_normalize_phone($phone),
+            'callbackUrl'    => $callbackUrl,
+            'notificationUrl'=> $callbackUrl,
+            'returnUrl'      => $callbackUrl,
+            'customerName'   => $name,
+            'customerEmail'  => $email,
         ];
         return cp_request('POST', '/payments/initiate-ussd-push-request', $payload);
     }
