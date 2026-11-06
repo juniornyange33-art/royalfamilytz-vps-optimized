@@ -10,8 +10,10 @@ return [
     'CLICKPESA_API_KEY' => 'PASTE_YOUR_CLICKPESA_API_KEY_HERE',
     'CLICKPESA_BASE_URL' => 'https://api.clickpesa.com/third-parties',
     'CLICKPESA_CHECKSUM_KEY' => '',
+    'CLICKPESA_CALLBACK_URL' => 'https://royalfamilytz.org/api/clickpesa/webhook',
+    'CLICKPESA_WEBHOOK_URL' => 'https://royalfamilytz.org/api/clickpesa/webhook',
     // Use the public HTTPS URL opened by phone users, including /royalfamilytz if applicable.
-    'APP_URL' => 'https://your-public-domain.example/royalfamilytz',
+    'APP_URL' => 'https://royalfamilytz.org',
     'GOOGLE_CLIENT_ID' => '',
     'GOOGLE_CLIENT_SECRET' => '',
     'MAIL_FROM' => 'hello@royalfamilytz.org',

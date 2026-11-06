@@ -26,4 +26,6 @@ return [
     'CLICKPESA_CLIENT_ID' => getenv('CLICKPESA_CLIENT_ID') ?: '',
     'CLICKPESA_API_KEY' => getenv('CLICKPESA_API_KEY') ?: '',
     'CLICKPESA_CHECKSUM' => getenv('CLICKPESA_CHECKSUM') ?: '',
+    'CLICKPESA_CALLBACK_URL' => getenv('CLICKPESA_CALLBACK_URL') ?: 'https://royalfamilytz.org/api/clickpesa/webhook',
+    'CLICKPESA_WEBHOOK_URL' => getenv('CLICKPESA_WEBHOOK_URL') ?: 'https://royalfamilytz.org/api/clickpesa/webhook',
 ];

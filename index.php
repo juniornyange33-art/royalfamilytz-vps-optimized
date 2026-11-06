@@ -296,7 +296,7 @@ if ($path === '/logout') { session_destroy(); header('Location: /'); exit; }
 if ($path === '/verify-email') {
     try { ensure_profile_columns(); $token = (string)($_GET['token'] ?? ''); $hash = hash('sha256', $token); $stmt = db()->prepare('SELECT id, name, email FROM users WHERE email_verification_token = ? AND email_verification_expires_at > NOW() LIMIT 1'); $stmt->execute([$hash]); $account = $stmt->fetch(); if (!$account) throw new RuntimeException('This verification link is invalid or has expired.'); db()->prepare('UPDATE users SET email_verified_at = NOW(), email_verification_token = NULL, email_verification_expires_at = NULL WHERE id = ?')->execute([(int)$account['id']]); if (mail_configured()) { try { send_email((string)$account['email'], 'Welcome to Royal Family TZ', "Hello {$account['name']},\n\nThank you for verifying your email and joining Royal Family TZ. Your account is now active. You can sign in and explore events, trips, membership, and community updates.\n\nWelcome to the family,\nRoyal Family TZ"); } catch (Throwable $welcomeError) {} } $_SESSION['flash'] = 'Email verified successfully. A welcome message has been sent to your email.'; } catch (Throwable $e) { $_SESSION['flash'] = $e->getMessage(); } header('Location: /login'); exit;
 }
-if ($path === '/api/clickpesa/webhook' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+if (($path === '/api/clickpesa/webhook' || $path === '/api/lickpesa/webhook') && $_SERVER['REQUEST_METHOD'] === 'POST') {
     header('Content-Type: application/json');
     $payload = json_decode(file_get_contents('php://input'), true) ?: [];
     if (!cp_verify_checksum($payload)) { http_response_code(401); echo json_encode(['error' => 'Invalid checksum']); exit; }
