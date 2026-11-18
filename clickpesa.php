@@ -8,8 +8,9 @@ function cp_config(string $key, string $default = ''): string {
         $local = is_file($file) ? (require $file) : [];
     }
 
+    // Map legacy or config array keys to environment variables
     if ($key === 'CLICKPESA_CHECKSUM_KEY' || $key === 'CLICKPESA_CHECKSUM') {
-        return getenv('CLICKPESA_CHECKSUM') ?: ($local['clickpesa']['checksum'] ?? $default);
+        return getenv('CLICKPESA_CHECKSUM') ?: (getenv('CLICKPESA_CHECKSUM_KEY') ?: ($local['clickpesa']['checksum'] ?? $default));
     }
     if ($key === 'CLICKPESA_CLIENT_ID') {
         return getenv('CLICKPESA_CLIENT_ID') ?: ($local['clickpesa']['client_id'] ?? $default);
@@ -97,10 +98,20 @@ function cp_verify_checksum(array $payload): bool {
 }
 
 function cp_callback_url(): string {
+    $explicit = getenv('CLICKPESA_CALLBACK_URL');
+    if ($explicit !== false && trim((string)$explicit) !== '') {
+        return rtrim((string)$explicit, '/');
+    }
+
+    $local = is_file(__DIR__ . '/local-config.php') ? (require __DIR__ . '/local-config.php') : [];
+    $explicit = (string)($local['CLICKPESA_CALLBACK_URL'] ?? '');
+    if ($explicit !== '') {
+        return rtrim($explicit, '/');
+    }
+
     $base = getenv('APP_URL');
     if ($base === false || trim((string)$base) === '') {
-        $local = is_file(__DIR__ . '/local-config.php') ? (require __DIR__ . '/local-config.php') : [];
-        $base = (string)($local['APP_URL'] ?? getenv('APP_URL') ?: '');
+        $base = (string)($local['APP_URL'] ?? '');
     }
     $base = trim((string)$base, '/');
     if ($base === '') {
@@ -108,6 +119,11 @@ function cp_callback_url(): string {
         $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
         $base = $scheme . '://' . $host;
     }
+
+    if (str_ends_with($base, '/api/clickpesa/webhook') || str_ends_with($base, '/api/lickpesa/webhook')) {
+        return rtrim($base, '/');
+    }
+
     return $base . '/api/clickpesa/webhook';
 }
 
@@ -115,14 +131,20 @@ function cp_token(): string {
     static $token = null;
     if ($token !== null) return $token;
 
+    $clientId = cp_config('CLICKPESA_CLIENT_ID');
+    $apiKey = cp_config('CLICKPESA_API_KEY');
+    if ($clientId === '' || $apiKey === '') {
+        throw new RuntimeException('ClickPesa credentials are missing. Set CLICKPESA_CLIENT_ID and CLICKPESA_API_KEY in the production .env file.');
+    }
+
     $sch = curl_init(cp_base() . '/generate-token');
     curl_setopt_array($sch, [
         CURLOPT_POST => true,
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT => 30,
         CURLOPT_HTTPHEADER => [
-            'client-id: ' . cp_config('CLICKPESA_CLIENT_ID'),
-            'api-key: ' . cp_config('CLICKPESA_API_KEY')
+            'client-id: ' . $clientId,
+            'api-key: ' . $apiKey
         ]
     ]);
 
@@ -132,7 +154,11 @@ function cp_token(): string {
     curl_close($sch);
 
     if ($raw === false || $code < 200 || $code >= 300) {
-        throw new RuntimeException("ClickPesa token request failed (HTTP {$code}): " . ($error ?: $raw));
+        $message = $error ?: (string)$raw;
+        if ($code === 403 && str_contains(strtolower($message), 'kyc')) {
+            throw new RuntimeException('ClickPesa API access requires account KYC approval. Complete KYC in ClickPesa, wait for approval, then verify the production credentials.');
+        }
+        throw new RuntimeException("ClickPesa token request failed (HTTP {$code}): " . $message);
     }
 
     $data = json_decode($raw, true);
